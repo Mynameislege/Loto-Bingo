@@ -142,7 +142,7 @@ async function scheduleGhostFill(
   });
   if (!room || room.status !== 'waiting') return;
 
-  const realCount = room.players.filter((p) => !p.isGhost).length;
+  const realCount = room.players.filter((p: { isGhost: boolean }) => !p.isGhost).length;
   if (realCount === 0) {
     // Nobody joined — abandon room
     await app.prisma.room.update({ where: { id: roomId }, data: { status: 'finished' } });

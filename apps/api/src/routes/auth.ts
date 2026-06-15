@@ -79,8 +79,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       if (!user) return reply.status(404).send({ error: 'User not found' });
 
-      const gamesPlayed = user.gameSessions.filter(s => s.endedAt !== null).length;
-      const bingos = user.gameSessions.filter(s => s.bingoValidated).length;
+      const gamesPlayed = user.gameSessions.filter((s: { endedAt: Date | null }) => s.endedAt !== null).length;
+      const bingos = user.gameSessions.filter((s: { bingoValidated: boolean }) => s.bingoValidated).length;
       const coupons = user.playerCoupons.length;
 
       // Calcul de la série (jours consécutifs)
