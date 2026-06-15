@@ -2,9 +2,15 @@
   "name": "@loto-seniors/host-engine",
   "version": "0.1.0",
   "private": true,
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
   "dependencies": {
     "@loto-seniors/host-content": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
   }
 }
