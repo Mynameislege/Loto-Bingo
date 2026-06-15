@@ -1,0 +1,10 @@
+{
+  "build": {
+    "cmds": [
+      "pnpm --filter api build"
+    ]
+  },
+  "start": {
+    "cmd": "node apps/api/dist/server.js"
+  }
+}
