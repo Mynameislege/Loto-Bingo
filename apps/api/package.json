@@ -1,0 +1,41 @@
+{
+  "name": "@loto-seniors/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/server.ts",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint src --ext .ts",
+    "clean": "rm -rf dist",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@fastify/helmet": "^11.0.0",
+    "@fastify/rate-limit": "^9.0.0",
+    "@loto-seniors/game-engine": "workspace:*",
+    "@loto-seniors/host-content": "workspace:*",
+    "@loto-seniors/host-engine": "workspace:*",
+    "@loto-seniors/shared": "workspace:*",
+    "@prisma/client": "^5.14.0",
+    "fastify": "^4.27.0",
+    "firebase-admin": "^12.1.0",
+    "ioredis": "^5.3.0",
+    "socket.io": "^4.7.0",
+    "fastify-plugin": "^4.5.0",
+    "zod": "^3.23.0"
+  },
+  "prisma": {
+    "seed": "tsx src/seed.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prisma": "^5.14.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.0"
+  }
+}

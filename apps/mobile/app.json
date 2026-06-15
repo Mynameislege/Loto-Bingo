@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Loto Seniors",
+    "slug": "loto-seniors",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A4A2A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "fr.lotoseniors.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A4A2A"
+      },
+      "package": "fr.lotoseniors.app"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "scheme": "lotoseniors",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

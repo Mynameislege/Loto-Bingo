@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────
+
+model User {
+  id              String    @id @default(uuid())
+  firebaseUid     String    @unique
+  displayName     String
+  email           String?   @unique
+  level           Int       @default(1)
+  xp              Int       @default(0)
+  streakDays      Int       @default(0)
+  lastPlayedAt    DateTime?
+  totalGames      Int       @default(0)
+  totalBingos     Int       @default(0)
+  preferredHour   Int?      // 0-23, for daily notification
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  gameSessions    GameSession[]
+  roomPlayers     RoomPlayer[]
+  playerCoupons   PlayerCoupon[]
+  dailyGames      DailyGame[]
+
+  @@map("users")
+}
+
+// ─── Game Session ──────────────────────────────────────────────────────────
+
+model GameSession {
+  id              String    @id @default(uuid())
+  userId          String
+  roomId          String?
+  mode            GameMode
+  card            Json      // Card[3][9] — stored as JSON
+  ballsDrawn      Int[]     // ordered sequence of drawn balls
+  lineValidated   Boolean   @default(false)
+  quineValidated  Boolean   @default(false)
+  bingoValidated  Boolean   @default(false)
+  couponAwarded   Boolean   @default(false)
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+
+  user            User       @relation(fields: [userId], references: [id])
+  room            Room?      @relation(fields: [roomId], references: [id])
+  dailyGame       DailyGame?
+
+  @@index([userId])
+  @@index([roomId])
+  @@map("game_sessions")
+}
+
+enum GameMode {
+  daily
+  campaign
+  multiplayer_public
+  multiplayer_family
+  free
+}
+
+// ─── Daily Game (1 per player per day) ────────────────────────────────────
+
+model DailyGame {
+  id              String    @id @default(uuid())
+  userId          String
+  date            DateTime  @db.Date  // date only, no time
+  gameSessionId   String      @unique
+  couponAwarded   Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+
+  user            User        @relation(fields: [userId], references: [id])
+  gameSession     GameSession @relation(fields: [gameSessionId], references: [id])
+
+  @@unique([userId, date])  // ← 1 daily game per player per day
+  @@index([date])
+  @@map("daily_games")
+}
+
+// ─── Room (Multiplayer) ───────────────────────────────────────────────────
+
+model Room {
+  id                String      @id @default(uuid())
+  mode              RoomMode
+  status            RoomStatus  @default(waiting)
+  inviteCode        String?     @unique  // 6-char code for family rooms
+  maxPlayers        Int         @default(10)
+  ballSequence      Int[]       // pre-generated 90-ball shuffle
+  ballsDrawnCount   Int         @default(0)
+  firstBingoUserId  String?
+  createdAt         DateTime    @default(now())
+  startedAt         DateTime?
+  endedAt           DateTime?
+
+  players           RoomPlayer[]
+  gameSessions      GameSession[]
+
+  @@index([status])
+  @@index([mode, status])  // matchmaking query
+  @@map("rooms")
+}
+
+enum RoomMode {
+  multiplayer_public
+  multiplayer_family
+}
+
+enum RoomStatus {
+  waiting
+  starting
+  active
+  finished
+}
+
+model RoomPlayer {
+  id              String    @id @default(uuid())
+  roomId          String
+  userId          String?   // null for ghost players
+  isGhost         Boolean   @default(false)
+  ghostName       String?
+  card            Json      // Card[3][9]
+  reactionDelayMs Int?      // ghost only
+  lineValidated   Boolean   @default(false)
+  quineValidated  Boolean   @default(false)
+  bingoValidated  Boolean   @default(false)
+  joinedAt        DateTime  @default(now())
+
+  room            Room      @relation(fields: [roomId], references: [id])
+  user            User?     @relation(fields: [userId], references: [id])
+
+  @@index([roomId])
+  @@index([userId])
+  @@map("room_players")
+}
+
+// ─── Merchant ─────────────────────────────────────────────────────────────
+
+model Merchant {
+  id                  String            @id @default(uuid())
+  siret               String            @unique
+  name                String
+  category            String
+  address             String
+  lat                 Float
+  lng                 Float
+  subscriptionTier    SubscriptionTier
+  active              Boolean           @default(true)
+  stripeCustomerId    String?           @unique
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  couponOffers        CouponOffer[]
+
+  @@index([active])
+  @@map("merchants")
+}
+
+enum SubscriptionTier {
+  discovery
+  standard
+  premium
+  event
+}
+
+// ─── Coupon Offer ─────────────────────────────────────────────────────────
+
+model CouponOffer {
+  id              String    @id @default(uuid())
+  merchantId      String
+  description     String    // free-text from merchant
+  monthlyStock    Int
+  dailyCap        Int       @default(2)
+  weeklyPlayerCap Int       @default(1)
+  validUntil      DateTime
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  merchant        Merchant  @relation(fields: [merchantId], references: [id])
+  playerCoupons   PlayerCoupon[]
+  stockEntries    CouponStock[]
+
+  @@index([merchantId, active])
+  @@map("coupon_offers")
+}
+
+// Monthly stock tracker (reset each month)
+model CouponStock {
+  id              String    @id @default(uuid())
+  couponOfferId   String
+  month           DateTime  @db.Date  // first day of month
+  distributed     Int       @default(0)
+  dailyDistributed Int      @default(0)
+  lastResetDate   DateTime  @db.Date
+
+  couponOffer     CouponOffer @relation(fields: [couponOfferId], references: [id])
+
+  @@unique([couponOfferId, month])
+  @@map("coupon_stock")
+}
+
+// ─── Player Coupon ────────────────────────────────────────────────────────
+
+model PlayerCoupon {
+  id                String    @id @default(uuid())
+  userId            String
+  couponOfferId     String
+  merchantId        String
+  qrCode            String    @unique @default(uuid())  // single-use UUID
+  awardedAt         DateTime  @default(now())
+  expiresAt         DateTime  // +7 days by default
+  usedAt            DateTime?
+  giftedToUserId    String?
+
+  user              User        @relation(fields: [userId], references: [id])
+  couponOffer       CouponOffer @relation(fields: [couponOfferId], references: [id])
+
+  @@index([userId])
+  @@index([qrCode])
+  @@index([merchantId])
+  @@map("player_coupons")
+}
