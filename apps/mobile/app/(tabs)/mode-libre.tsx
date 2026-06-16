@@ -257,7 +257,7 @@ export default function ModeLibreScreen() {
             result.bingo ? 'MAGNIFIQUE ! Un vrai champion du Libre !' :
             result.quine ? 'Belle quine ! Vous progressez bien.' :
             result.line  ? 'Une belle ligne — la prochaine ce sera le bingo !' :
-            'Ce n'est pas pour cette fois... Mais vous revenez, n'est-ce pas ?'
+            "Ce n'est pas pour cette fois... Mais vous revenez, n'est-ce pas ?"
           } />
 
         <View style={st.resultCard}>
