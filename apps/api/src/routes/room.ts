@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { generateCard, generateBallSequence, fillWithGhosts } from '@loto-seniors/game-engine';
 import { MatchmakingRequest } from '@loto-seniors/shared';
 
@@ -71,7 +72,7 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
         data: {
           roomId: room.id,
           userId: user.id,
-          card: card as unknown as Record<string, unknown>[],
+          card: card as unknown as Prisma.InputJsonValue,
         },
       });
 
@@ -114,7 +115,7 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
           players: {
             create: {
               userId: user.id,
-              card: card as unknown as Record<string, unknown>[],
+              card: card as unknown as Prisma.InputJsonValue,
             },
           },
         },

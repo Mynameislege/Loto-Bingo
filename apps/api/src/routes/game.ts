@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { generateCard, generateBallSequence, checkCard, shouldAwardCoupon } from '@loto-seniors/game-engine';
 
 export async function gameRoutes(app: FastifyInstance): Promise<void> {
@@ -56,7 +57,7 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
         data: {
           userId: user.id,
           mode: 'daily',
-          card: card as unknown as Record<string, unknown>[],
+          card: card as unknown as Prisma.InputJsonValue,
           ballsDrawn: [],
         },
       });
@@ -163,7 +164,7 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
           quineValidated: checkResult.quine,
           bingoValidated: checkResult.bingo,
           couponAwarded,
-          endedAt: gameOver ? new Date() : undefined,
+          endedAt: gameOver ? new Date() : null,
         },
       });
 

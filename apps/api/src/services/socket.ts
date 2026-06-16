@@ -125,7 +125,7 @@ async function handleClaim(
       quineValidated: claimType === 'quine' || session.quineValidated,
       bingoValidated: claimType === 'bingo' || session.bingoValidated,
       couponAwarded: couponAwarded || session.couponAwarded,
-      endedAt: claimType === 'bingo' ? new Date() : undefined,
+      endedAt: claimType === 'bingo' ? new Date() : null,
     },
   });
 
