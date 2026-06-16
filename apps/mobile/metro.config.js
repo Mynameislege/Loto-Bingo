@@ -121,14 +121,21 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { filePath: pinned, type: 'sourceFile' };
   }
 
-  // Fix pnpm virtual store: expo/AppEntry.js at deep .pnpm path resolves
-  // '../../App' to the wrong location (not the project root).
-  // Intercept ANY '../../App' import — only expo/AppEntry.js uses this pattern.
-  if (moduleName === '../../App') {
-    const appTsx = path.resolve(projectRoot, 'App.tsx');
-    if (fs.existsSync(appTsx)) {
-      return { filePath: appTsx, type: 'sourceFile' };
+  // Fix pnpm virtual store: expo/AppEntry is deep in .pnpm store so its
+  // relative import '../../App' resolves to the wrong path.
+  // Strategy A: pin expo/AppEntry to the LOCAL symlink — from there,
+  //   '../../App' naturally resolves to apps/mobile/App.tsx.
+  if (moduleName === 'expo/AppEntry') {
+    const localAppEntry = path.resolve(projectRoot, 'node_modules', 'expo', 'AppEntry.js');
+    if (fs.existsSync(localAppEntry)) {
+      return { filePath: localAppEntry, type: 'sourceFile' };
     }
+  }
+
+  // Strategy B (fallback): if '../../App' still comes from the pnpm store,
+  // redirect it directly to our App.tsx shim.
+  if (moduleName === '../../App') {
+    return { filePath: path.resolve(projectRoot, 'App.tsx'), type: 'sourceFile' };
   }
 
   return context.resolveRequest(context, moduleName, platform);
