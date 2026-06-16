@@ -104,7 +104,7 @@ export default function CouponsScreen() {
                 Alert.alert('✅ Coupon offert !', 'Votre proche a reçu le coupon. Marcel est fier de vous !');
                 fetchCoupons();
               } else {
-                Alert.alert('Erreur', 'Impossible d'offrir le coupon pour l'instant.');
+                Alert.alert('Erreur', "Impossible d'offrir le coupon pour l'instant.");
               }
             } catch (e) { Alert.alert('Erreur réseau', String(e)); }
           },
