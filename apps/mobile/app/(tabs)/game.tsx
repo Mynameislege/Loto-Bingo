@@ -547,9 +547,20 @@ const styles = StyleSheet.create({
 
   gameOverCard: {
     marginHorizontal: Spacing.lg,
-    backgroundColor: Colors.woodMid,
-    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.woodGrain,
-    padding: Spacing.lg, alignItems: 'center',
+    marginBottom: Spacing.lg,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.orange,
+    ...Shadow.card,
   },
-  gameOverText: { fontSize: 18, fontWeight: '700', color: Colors.parchment, textAlign: 'center' },
+  gameOverText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.text,
+    textAlign: 'center',
+    lineHeight: 26,
+  },
 });

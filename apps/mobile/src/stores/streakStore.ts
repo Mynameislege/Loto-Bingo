@@ -17,13 +17,13 @@ export interface Milestone {
 
 const MILESTONES_TEMPLATE: Omit<Milestone, 'unlockedAt'>[] = [
   { id: 'first_line',    icon: '📏', label: 'Première Ligne !',              marcelQuote: 'Première ligne — et ça commence bien !' },
-  { id: 'first_quine',   icon: '✨', label: 'Première Quine !',              marcelQuote: 'Votre toute première Quine ! Ce moment-là, on ne l'oublie pas.' },
+  { id: 'first_quine',   icon: '✨', label: 'Première Quine !',              marcelQuote: "Votre toute première Quine ! Ce moment-là, on ne l'oublie pas." },
   { id: 'first_bingo',   icon: '🎉', label: 'Premier BINGO !',               marcelQuote: 'VOTRE TOUT PREMIER BINGO ! Mesdames et messieurs !' },
   { id: 'streak_7',      icon: '🔥', label: '7 jours de suite',              marcelQuote: 'Sept jours de suite — quelle belle fidélité !' },
   { id: 'games_10',      icon: '🎯', label: '10 parties jouées',             marcelQuote: 'Dix parties — vous êtes un vrai habitué !' },
   { id: 'first_coupon',  icon: '🎟', label: 'Premier coupon utilisé',        marcelQuote: 'Premier coupon scanné en boutique — le cercle est bouclé !' },
-  { id: 'games_100',     icon: '💯', label: '100 parties jouées',            marcelQuote: 'Cent parties ! C'est un centenaire du Loto !' },
-  { id: 'first_family',  icon: '👨‍👩‍👧', label: 'Première partie en Famille', marcelQuote: 'Jouer en famille — il n'y a rien de plus beau !' },
+  { id: 'games_100',     icon: '💯', label: '100 parties jouées',            marcelQuote: "Cent parties ! C'est un centenaire du Loto !" },
+  { id: 'first_family',  icon: '👨‍👩‍👧', label: 'Première partie en Famille', marcelQuote: "Jouer en famille — il n'y a rien de plus beau !" },
   { id: 'app_birthday',  icon: '🎂', label: 'Un an avec nous !',             marcelQuote: 'Un an déjà que vous jouez avec nous — merci, et longue vie à notre belle aventure !' },
 ];
 
