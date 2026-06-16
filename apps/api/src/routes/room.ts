@@ -158,7 +158,7 @@ async function scheduleGhostFill(
         roomId,
         isGhost: true,
         ghostName: g.displayName,
-        card: g.card as unknown as Record<string, unknown>[],
+        card: g.card as unknown as Prisma.InputJsonValue,
         reactionDelayMs: g.reactionDelayMs,
       })),
     });
