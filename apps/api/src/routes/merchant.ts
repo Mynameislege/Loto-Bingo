@@ -78,37 +78,72 @@ export async function merchantRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * GET /merchant/nearby
-   * Return active merchants within radius_km of a lat/lng (uses PostGIS).
+   * Return active merchants within radius (meters) of a lat/lng.
+   * Uses Haversine formula — no PostGIS required.
+   * Mobile sends: ?lat=...&lng=...&radius=10000 (meters)
    */
   app.get(
     '/nearby',
     { preHandler: [app.authenticate] },
     async (request, reply) => {
-      const { lat, lng, radius_km = 10 } = z.object({
-        lat: z.coerce.number(),
-        lng: z.coerce.number(),
-        radius_km: z.coerce.number().default(10),
+      const { lat, lng, radius } = z.object({
+        lat:    z.coerce.number().min(-90).max(90),
+        lng:    z.coerce.number().min(-180).max(180),
+        radius: z.coerce.number().default(10000),
       }).parse(request.query);
 
-      // PostGIS ST_DWithin query via Prisma $queryRaw
-      const merchants = await app.prisma.$queryRaw<{ id: string; name: string; category: string; distance_m: number }[]>`
-        SELECT id, name, category,
-               ST_Distance(
-                 ST_SetSRID(ST_Point(lng, lat), 4326)::geography,
-                 ST_SetSRID(ST_Point(${lng}, ${lat}), 4326)::geography
-               ) AS distance_m
-        FROM merchants
-        WHERE active = true
-          AND ST_DWithin(
-            ST_SetSRID(ST_Point(lng, lat), 4326)::geography,
-            ST_SetSRID(ST_Point(${lng}, ${lat}), 4326)::geography,
-            ${radius_km * 1000}
-          )
+      // Haversine — pure Postgres, aucune extension requise
+      type NearbyRow = {
+        id: string; name: string; address: string;
+        distance_m: number;
+        coupon_description: string | null;
+        stock_remaining: number | null;
+      };
+
+      const rows = await app.prisma.$queryRaw<NearbyRow[]>`
+        SELECT
+          m.id,
+          m.name,
+          m.address,
+          ROUND(
+            6371000.0 * 2.0 * ASIN(SQRT(
+              POWER(SIN(RADIANS((m.lat - ${lat}) / 2.0)), 2) +
+              COS(RADIANS(${lat})) * COS(RADIANS(m.lat)) *
+              POWER(SIN(RADIANS((m.lng - ${lng}) / 2.0)), 2)
+            ))
+          )::int AS distance_m,
+          co.description  AS coupon_description,
+          (co.monthly_stock - COALESCE(cs.distributed, 0)) AS stock_remaining
+        FROM merchants m
+        LEFT JOIN coupon_offers co
+          ON co.merchant_id = m.id
+         AND co.active = true
+         AND co.valid_until > NOW()
+        LEFT JOIN coupon_stock cs
+          ON cs.coupon_offer_id = co.id
+         AND cs.month = DATE_TRUNC('month', NOW())
+        WHERE m.active = true
+          AND 6371000.0 * 2.0 * ASIN(SQRT(
+            POWER(SIN(RADIANS((m.lat - ${lat}) / 2.0)), 2) +
+            COS(RADIANS(${lat})) * COS(RADIANS(m.lat)) *
+            POWER(SIN(RADIANS((m.lng - ${lng}) / 2.0)), 2)
+          )) <= ${radius}
         ORDER BY distance_m ASC
-        LIMIT 50
+        LIMIT 30
       `;
 
-      return reply.send(merchants);
+      const result = rows.map(r => ({
+        id:          r.id,
+        description: r.coupon_description ?? 'Offre partenaire',
+        stockRemaining: r.stock_remaining ?? 0,
+        merchant: {
+          name:      r.name,
+          address:   r.address,
+          distanceM: r.distance_m,
+        },
+      }));
+
+      return reply.send(result);
     },
   );
 }

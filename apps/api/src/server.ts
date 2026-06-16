@@ -13,6 +13,7 @@ import { gameRoutes } from './routes/game';
 import { roomRoutes } from './routes/room';
 import { couponRoutes } from './routes/coupon';
 import { merchantRoutes } from './routes/merchant';
+import { campaignRoutes } from './routes/campaign';
 
 import { registerSocketHandlers } from './services/socket';
 
@@ -43,6 +44,7 @@ async function bootstrap(): Promise<void> {
   await app.register(roomRoutes,     { prefix: '/room' });
   await app.register(couponRoutes,   { prefix: '/coupon' });
   await app.register(merchantRoutes, { prefix: '/merchant' });
+  await app.register(campaignRoutes, { prefix: '/campaign' });
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
@@ -59,7 +61,7 @@ async function bootstrap(): Promise<void> {
   // ── Start ─────────────────────────────────────────────────────────────
   try {
     await app.listen({ port: PORT, host: HOST });
-    console.log(`Server running at http://${HOST}:${PORT}`);
+    console.log('Server running at http://' + HOST + ':' + PORT);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
