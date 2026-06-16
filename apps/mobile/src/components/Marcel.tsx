@@ -6,12 +6,14 @@ import { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Colors, Radius, Shadow } from './ui/tokens';
 
-export type MarcelMood = 'bienvenue' | 'conseil' | 'ligne' | 'quine' | 'bingo';
+export type MarcelMood = 'bienvenue' | 'conseil' | 'ligne' | 'quine' | 'bingo' | 'neutral' | 'tension' | 'opening' | 'happy';
 
 interface MarcelProps {
   visible: boolean;
   mood?: MarcelMood;
   quote?: string;
+  /** Alias de quote pour compatibilité */
+  message?: string;
   withBaguette?: boolean;
   onDismiss?: () => void;
 }
@@ -41,11 +43,31 @@ export const MARCEL_QUOTES: Record<MarcelMood, string[]> = {
     '« C\'est le BINGO !!! 🥖 »',
     '« BINGO !!! Vive le Loto Seniors ! »',
   ],
+  neutral: [
+    '« Bienvenue en salle ! Que la chance soit avec vous ! »',
+    '« Marcel est là — à vos cartons ! »',
+    '« Tout le monde est prêt ? C\'est parti ! »',
+  ],
+  tension: [
+    '« Ça chauffe ! Encore quelques numéros... »',
+    '« On y est presque ! Tenez bon ! »',
+    '« Marcel sent que ça va tomber ! »',
+  ],
+  opening: [
+    '« La partie commence ! Bonne chance à tous ! »',
+    '« Les dés sont jetés — à vous de jouer ! »',
+    '« En selle ! Marcel lance les boules ! »',
+  ],
+  happy: [
+    '« Magnifique ! Vous avez l\'œil ! »',
+    '« Bien joué ! Marcel est impressionné ! »',
+    '« Quelle chance — ou quel talent ! »',
+  ],
 };
 
 export function pickQuote(mood: MarcelMood): string {
-  const list = MARCEL_QUOTES[mood];
-  return list[Math.floor(Math.random() * list.length)] ?? list[0] ?? '';
+  const list = MARCEL_QUOTES[mood] ?? MARCEL_QUOTES.bienvenue;
+  return list[Math.floor(Math.random() * list.length)] ?? '';
 }
 
 // ── Composant Marcel ─────────────────────────────────────────────────────────
@@ -53,6 +75,7 @@ export default function Marcel({
   visible,
   mood = 'bienvenue',
   quote,
+  message,
   withBaguette = false,
 }: MarcelProps) {
   const translateX = useRef(new Animated.Value(200)).current;
@@ -94,7 +117,7 @@ export default function Marcel({
     outputRange: ['-25deg', '-10deg'],
   });
 
-  const displayQuote = quote ?? pickQuote(mood);
+  const displayQuote = quote ?? message ?? pickQuote(mood);
   const isExcited = mood === 'bingo' || mood === 'quine';
 
   if (!visible) return null;
