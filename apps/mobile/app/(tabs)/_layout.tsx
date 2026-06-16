@@ -62,15 +62,8 @@ export default function TabsLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="mode-libre"
-        options={{
-          title: 'Libre',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="infinite" size={size} color={color} />
-          ),
-        }}
-      />
+      {/* Mode Libre accessible depuis l'Accueil — pas de tab dédiée */}
+      <Tabs.Screen name="mode-libre" options={{ href: null }} />
       <Tabs.Screen
         name="coupons"
         options={{
