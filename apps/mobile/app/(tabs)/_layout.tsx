@@ -1,8 +1,14 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/components/ui/tokens';
+import LotoBallIcon from '@/components/ui/LotoBallIcon';
+import { useGameStore } from '@/stores/gameStore';
 
 export default function TabsLayout() {
+  const gameOver   = useGameStore(s => s.gameOver);
+  const card       = useGameStore(s => s.card);
+  const playedToday = card !== null || gameOver;
+
   return (
     <Tabs
       screenOptions={{
@@ -34,7 +40,7 @@ export default function TabsLayout() {
         options={{
           title: 'Jouer',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="game-controller" size={size} color={color} />
+            <LotoBallIcon color={color} size={size} playedToday={playedToday} />
           ),
         }}
       />
@@ -74,12 +80,9 @@ export default function TabsLayout() {
           ),
         }}
       />
-      {/* Onglet commerçant — accessible via lien direct, non visible dans la barre */}
       <Tabs.Screen
         name="merchant"
-        options={{
-          href: null,
-        }}
+        options={{ href: null }}
       />
     </Tabs>
   );

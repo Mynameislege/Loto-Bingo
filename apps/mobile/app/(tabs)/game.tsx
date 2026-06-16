@@ -7,52 +7,69 @@ import { useGameStore } from '@/stores/gameStore';
 import { Colors, Spacing, Radius, Shadow } from '@/components/ui/tokens';
 import Marcel, { type MarcelMood, pickQuote } from '@/components/Marcel';
 import ConfettiBingo from '@/components/ConfettiBingo';
+import { useSound } from '@/hooks/useSound';
 
-// ── Couleur des boules par dizaine ───────────────────────────────────────────
-function ballColor(n: number): string {
-  if (n <= 9)  return '#E53935';
-  if (n <= 19) return '#1E88E5';
-  if (n <= 29) return '#43A047';
-  if (n <= 39) return '#FB8C00';
-  if (n <= 49) return '#8E24AA';
-  if (n <= 59) return '#00ACC1';
-  if (n <= 69) return '#F4511E';
-  if (n <= 79) return '#6D4C41';
-  return '#546E7A';
+// ── Boules style bingo — lettre B/I/N/G/O + numéro (loto français 1–90) ──────
+// B = 1-18  (rouge)
+// I = 19-36 (bleu)
+// N = 37-54 (blanc / gris clair, texte sombre)
+// G = 55-72 (vert)
+// O = 73-90 (orange/jaune)
+
+interface BallSpec {
+  letter: string;
+  bg: string;       // couleur principale boule
+  bg2: string;      // dégradé intérieur (plus foncé)
+  border: string;   // bord externe
+  textColor: string;
+  bandColor: string;
 }
 
-function ballDarkColor(n: number): string {
-  if (n <= 9)  return '#B71C1C';
-  if (n <= 19) return '#0D47A1';
-  if (n <= 29) return '#1B5E20';
-  if (n <= 39) return '#E65100';
-  if (n <= 49) return '#4A148C';
-  if (n <= 59) return '#006064';
-  if (n <= 69) return '#BF360C';
-  if (n <= 79) return '#3E2723';
-  return '#263238';
+function getBallSpec(n: number): BallSpec {
+  if (n <= 18) return { letter: 'B', bg: '#E53935', bg2: '#B71C1C', border: '#8B0000', textColor: '#fff', bandColor: 'rgba(255,255,255,0.92)' };
+  if (n <= 36) return { letter: 'I', bg: '#1E88E5', bg2: '#0D47A1', border: '#083180', textColor: '#fff', bandColor: 'rgba(255,255,255,0.92)' };
+  if (n <= 54) return { letter: 'N', bg: '#F5F5F5', bg2: '#BDBDBD', border: '#9E9E9E', textColor: '#212121', bandColor: 'rgba(100,100,100,0.15)' };
+  if (n <= 72) return { letter: 'G', bg: '#43A047', bg2: '#1B5E20', border: '#0A3D0A', textColor: '#fff', bandColor: 'rgba(255,255,255,0.92)' };
+  return         { letter: 'O', bg: '#FB8C00', bg2: '#E65100', border: '#BF360C', textColor: '#fff', bandColor: 'rgba(255,255,255,0.92)' };
 }
 
-// ── Boule 3D ─────────────────────────────────────────────────────────────────
+// ── Boule style bingo plastique ───────────────────────────────────────────────
 function LotoBall({ number, size = 44 }: { number: number; size?: number }) {
-  const color = ballColor(number);
-  const dark  = ballDarkColor(number);
-  const fontSize = size < 44 ? 11 : size > 80 ? 34 : 16;
-  const shineSize = Math.round(size * 0.28);
+  const spec = getBallSpec(number);
+
+  // Proportions selon taille
+  const bandH      = size * 0.38;
+  const shineW     = size * 0.26;
+  const shineH     = size * 0.18;
+  const letterSize = size < 44 ? 8  : size > 80 ? 22 : 11;
+  const numSize    = size < 44 ? 11 : size > 80 ? 32 : 16;
+  const bandTop    = (size - bandH) / 2;
 
   return (
-    <View style={[ballStyles.outer, {
-      width: size, height: size, borderRadius: size / 2,
-      backgroundColor: color,
-      borderColor: dark,
-      shadowColor: dark,
-    }]}>
-      {/* Bande blanche centrale */}
-      <View style={[ballStyles.band, { top: size * 0.3, height: size * 0.4 }]} />
-      {/* Reflet brillant */}
-      <View style={[ballStyles.shine, { width: shineSize, height: shineSize, borderRadius: shineSize / 2 }]} />
-      {/* Numéro */}
-      <Text style={[ballStyles.number, { fontSize, textShadowColor: dark }]}>{number}</Text>
+    <View style={[
+      ballStyles.outer,
+      {
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: spec.bg,
+        borderColor: spec.border,
+        shadowColor: spec.bg2,
+      },
+    ]}>
+      {/* Bande blanche horizontale centrale (style bingo authentique) */}
+      <View style={[ballStyles.band, { top: bandTop, height: bandH, backgroundColor: spec.bandColor }]} />
+
+      {/* Reflet brillant haut-gauche */}
+      <View style={[ballStyles.shine, { width: shineW, height: shineH, borderRadius: shineH / 2 }]} />
+      {/* Petit reflet secondaire */}
+      <View style={[ballStyles.shine2, { width: shineW * 0.5, height: shineH * 0.5, borderRadius: shineH * 0.25 }]} />
+
+      {/* Lettre (dans la bande blanche) + Numéro */}
+      <View style={ballStyles.textContainer}>
+        <Text style={[ballStyles.letter, { fontSize: letterSize, color: spec.bg2 }]}>{spec.letter}</Text>
+        <Text style={[ballStyles.number, { fontSize: numSize, color: spec.textColor === '#fff' ? '#fff' : spec.bg2 }]}>
+          {number}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -60,25 +77,43 @@ function LotoBall({ number, size = 44 }: { number: number; size?: number }) {
 const ballStyles = StyleSheet.create({
   outer: {
     justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5, shadowRadius: 6,
-    elevation: 6,
+    borderWidth: 2.5,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.6, shadowRadius: 8,
+    elevation: 8,
     overflow: 'hidden',
     position: 'relative',
   },
   band: {
     position: 'absolute', left: 0, right: 0,
-    backgroundColor: 'rgba(255,255,255,0.18)',
   },
   shine: {
-    position: 'absolute', top: '10%', left: '15%',
-    backgroundColor: 'rgba(255,255,255,0.45)',
+    position: 'absolute', top: '8%', left: '12%',
+    backgroundColor: 'rgba(255,255,255,0.62)',
+  },
+  shine2: {
+    position: 'absolute', top: '18%', left: '22%',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  textContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3,
+  },
+  letter: {
+    fontWeight: '900',
+    lineHeight: undefined,
+    letterSpacing: 1,
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    textShadowColor: 'rgba(0,0,0,0.2)',
   },
   number: {
-    fontWeight: '900', color: '#fff',
-    textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
-    zIndex: 2,
+    fontWeight: '900',
+    lineHeight: undefined,
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    textShadowColor: 'rgba(0,0,0,0.35)',
   },
 });
 
@@ -91,6 +126,9 @@ export default function GameScreen() {
     card, ballsDrawn, checkResult, couponAwarded,
     gameOver, isLoading, startDailyGame, drawBall, reset,
   } = useGameStore();
+
+  // ── Sons ─────────────────────────────────────────────────────────────────
+  const { play, playAmbience, stopAmbience } = useSound();
 
   // ── Timer auto ────────────────────────────────────────────────────────────
   const [countdown, setCountdown] = useState(AUTO_DRAW_SECONDS);
@@ -125,6 +163,7 @@ export default function GameScreen() {
   useEffect(() => {
     if (countdown === 0 && card && !gameOver && !isLoading) {
       timerProgress.setValue(1);
+      play('ball_draw');
       drawBall();
     }
   }, [countdown]);
@@ -165,32 +204,46 @@ export default function GameScreen() {
     marcelTimer.current = setTimeout(() => setMarcelVisible(false), autoHideMs);
   }, []);
 
+  // ── Ambiance : démarre dès que la partie commence ─────────────────────────
+  useEffect(() => {
+    if (card && !gameOver) {
+      playAmbience();
+    }
+    if (gameOver) {
+      stopAmbience();
+    }
+  }, [card, gameOver]);
+
   // ── Nettoyage ─────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       reset();
       stopTimer();
+      stopAmbience();
       if (marcelTimer.current) clearTimeout(marcelTimer.current);
     };
   }, []);
 
-  // ── Déclencheurs Marcel ───────────────────────────────────────────────────
+  // ── Déclencheurs Marcel + Sons ────────────────────────────────────────────
   useEffect(() => {
     if (!card) return;
 
     if (checkResult.bingo && !prevBingo.current) {
       prevBingo.current = true;
+      play('bingo');
       showMarcel('bingo', undefined, true, 5000);
       setConfettiVisible(true);
       return;
     }
     if (checkResult.quine && !prevQuine.current) {
       prevQuine.current = true;
+      play('quine');
       showMarcel('quine', undefined, false, 4000);
       return;
     }
     if (checkResult.line && !prevLine.current) {
       prevLine.current = true;
+      play('line');
       showMarcel('ligne', undefined, false, 3500);
       return;
     }
@@ -380,7 +433,7 @@ export default function GameScreen() {
   );
 }
 
-// ── Composants ────────────────────────────────────────────────────────────────
+// ── Composants ──────────────────────────────────────────────────────────────────────────────
 function ResultBadge({ label, active, color }: { label: string; active: boolean; color: string }) {
   return (
     <View style={[styles.badge, active && { backgroundColor: color, borderColor: color }]}>
@@ -389,7 +442,7 @@ function ResultBadge({ label, active, color }: { label: string; active: boolean;
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ──────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   startContainer: {
     flex: 1, backgroundColor: Colors.background,
