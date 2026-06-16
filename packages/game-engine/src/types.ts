@@ -42,4 +42,6 @@ export interface CouponAwardConfig {
   dailyBallLimit: number;
   /** Is this player the first to Bingo in their room? (multiplayer only) */
   isFirstBingo?: boolean;
+  /** Consecutive days played — 7+ days doubles the coupon chance (raises ball limit to 90) */
+  streakDays?: number;
 }

@@ -116,13 +116,35 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
       const card = session.card as unknown as Parameters<typeof checkCard>[0];
       const checkResult = checkCard(card, newBallsDrawn);
 
-      // Coupon: Bingo AND within 70-ball daily limit
+      // Coupon: Bingo AND within daily ball limit (streak of 7+ days doubles chances)
       const DAILY_BALL_LIMIT = 70;
+
+      // Calculate user's consecutive daily game streak (counting from today backwards)
+      const allDailyGames = await app.prisma.dailyGame.findMany({
+        where: { userId: session.user.id },
+        orderBy: { date: 'desc' },
+        select: { date: true },
+      });
+      let streakDays = 0;
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      for (let i = 0; i < allDailyGames.length; i++) {
+        const expected = new Date(todayStart);
+        expected.setDate(expected.getDate() - i);
+        const gameDate = new Date(allDailyGames[i]!.date);
+        gameDate.setHours(0, 0, 0, 0);
+        if (gameDate.getTime() === expected.getTime()) {
+          streakDays++;
+        } else {
+          break;
+        }
+      }
+
       const shouldGiveCoupon =
         checkResult.bingo &&
         !session.couponAwarded &&
         shouldAwardCoupon(
-          { mode: 'daily', dailyBallLimit: DAILY_BALL_LIMIT },
+          { mode: 'daily', dailyBallLimit: DAILY_BALL_LIMIT, streakDays },
           newBallsDrawn.length,
           true,
         );

@@ -16,8 +16,14 @@ export function shouldAwardCoupon(
   if (!isBingo) return false;
 
   switch (config.mode) {
-    case 'daily':
-      return ballsDrawnCount <= config.dailyBallLimit;
+    case 'daily': {
+      // 7-day streak doubles coupon chances: raise limit to 90 (always wins on Bingo)
+      const effectiveLimit =
+        config.streakDays !== undefined && config.streakDays >= 7
+          ? 90
+          : config.dailyBallLimit;
+      return ballsDrawnCount <= effectiveLimit;
+    }
 
     case 'multiplayer_public':
     case 'multiplayer_family':

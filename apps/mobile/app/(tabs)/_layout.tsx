@@ -17,7 +17,7 @@ export default function TabsLayout() {
         },
         tabBarActiveTintColor: Colors.orange,
         tabBarInactiveTintColor: Colors.textWood,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600', marginTop: 2 },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', marginTop: 2 },
       }}
     >
       <Tabs.Screen
@@ -39,21 +39,29 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="campaign"
+        options={{
+          title: 'Campagne',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="trophy" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="multiplayer"
+        options={{
+          title: 'Multi',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="people" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="coupons"
         options={{
           title: 'Coupons',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="ticket" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="merchant"
-        options={{
-          title: 'Commerçant',
-          tabBarLabel: () => null,
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="storefront" size={30} color={color} />
           ),
         }}
       />
@@ -64,6 +72,13 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person" size={size} color={color} />
           ),
+        }}
+      />
+      {/* Onglet commerçant — accessible via lien direct, non visible dans la barre */}
+      <Tabs.Screen
+        name="merchant"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, ActivityIndicator, Alert,
+  ScrollView, ActivityIndicator, Alert, Animated,
 } from 'react-native';
 import { useGameStore } from '@/stores/gameStore';
 import { Colors, Spacing, Radius, Shadow } from '@/components/ui/tokens';
 import Marcel, { type MarcelMood, pickQuote } from '@/components/Marcel';
+import ConfettiBingo from '@/components/ConfettiBingo';
 
-// Couleur des boules par dizaine (tradition loto français)
+// ── Couleur des boules par dizaine ───────────────────────────────────────────
 function ballColor(n: number): string {
   if (n <= 9)  return '#E53935';
   if (n <= 19) return '#1E88E5';
@@ -20,8 +21,70 @@ function ballColor(n: number): string {
   return '#546E7A';
 }
 
-// Marcel apparaît tous les N boules tirées (conseils aléatoires)
-const CONSEIL_FREQUENCY = 7;
+function ballDarkColor(n: number): string {
+  if (n <= 9)  return '#B71C1C';
+  if (n <= 19) return '#0D47A1';
+  if (n <= 29) return '#1B5E20';
+  if (n <= 39) return '#E65100';
+  if (n <= 49) return '#4A148C';
+  if (n <= 59) return '#006064';
+  if (n <= 69) return '#BF360C';
+  if (n <= 79) return '#3E2723';
+  return '#263238';
+}
+
+// ── Boule 3D ─────────────────────────────────────────────────────────────────
+function LotoBall({ number, size = 44 }: { number: number; size?: number }) {
+  const color = ballColor(number);
+  const dark  = ballDarkColor(number);
+  const fontSize = size < 44 ? 11 : size > 80 ? 34 : 16;
+  const shineSize = Math.round(size * 0.28);
+
+  return (
+    <View style={[ballStyles.outer, {
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: color,
+      borderColor: dark,
+      shadowColor: dark,
+    }]}>
+      {/* Bande blanche centrale */}
+      <View style={[ballStyles.band, { top: size * 0.3, height: size * 0.4 }]} />
+      {/* Reflet brillant */}
+      <View style={[ballStyles.shine, { width: shineSize, height: shineSize, borderRadius: shineSize / 2 }]} />
+      {/* Numéro */}
+      <Text style={[ballStyles.number, { fontSize, textShadowColor: dark }]}>{number}</Text>
+    </View>
+  );
+}
+
+const ballStyles = StyleSheet.create({
+  outer: {
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5, shadowRadius: 6,
+    elevation: 6,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  band: {
+    position: 'absolute', left: 0, right: 0,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  shine: {
+    position: 'absolute', top: '10%', left: '15%',
+    backgroundColor: 'rgba(255,255,255,0.45)',
+  },
+  number: {
+    fontWeight: '900', color: '#fff',
+    textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+    zIndex: 2,
+  },
+});
+
+// ── Durée du timer en secondes ────────────────────────────────────────────────
+const AUTO_DRAW_SECONDS = 6;
+const CONSEIL_FREQUENCY = 15;
 
 export default function GameScreen() {
   const {
@@ -29,10 +92,58 @@ export default function GameScreen() {
     gameOver, isLoading, startDailyGame, drawBall, reset,
   } = useGameStore();
 
-  // ── État Marcel ────────────────────────────────────────────────────────────
-  const [marcelVisible, setMarcelVisible] = useState(false);
-  const [marcelMood, setMarcelMood]       = useState<MarcelMood>('bienvenue');
-  const [marcelQuote, setMarcelQuote]     = useState('');
+  // ── Timer auto ────────────────────────────────────────────────────────────
+  const [countdown, setCountdown] = useState(AUTO_DRAW_SECONDS);
+  const [timerActive, setTimerActive] = useState(false);
+  const countdownRef = useRef(AUTO_DRAW_SECONDS);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerProgress = useRef(new Animated.Value(1)).current;
+
+  const startTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    countdownRef.current = AUTO_DRAW_SECONDS;
+    setCountdown(AUTO_DRAW_SECONDS);
+    setTimerActive(true);
+    Animated.timing(timerProgress, { toValue: 0, duration: AUTO_DRAW_SECONDS * 1000, useNativeDriver: false }).start();
+    timerRef.current = setInterval(() => {
+      countdownRef.current -= 1;
+      setCountdown(countdownRef.current);
+      if (countdownRef.current <= 0) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setTimerActive(false);
+      }
+    }, 1000);
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerProgress.stopAnimation();
+    setTimerActive(false);
+  }, []);
+
+  // Auto-draw quand countdown atteint 0
+  useEffect(() => {
+    if (countdown === 0 && card && !gameOver && !isLoading) {
+      timerProgress.setValue(1);
+      drawBall();
+    }
+  }, [countdown]);
+
+  // Redémarrer le timer après chaque tirage
+  useEffect(() => {
+    if (card && !gameOver && !isLoading) {
+      startTimer();
+    }
+    if (gameOver) stopTimer();
+  }, [ballsDrawn.length, gameOver, card]);
+
+  // ── Confetti bingo ────────────────────────────────────────────────────────
+  const [confettiVisible, setConfettiVisible] = useState(false);
+
+  // ── État Marcel ──────────────────────────────────────────────────────────
+  const [marcelVisible, setMarcelVisible]   = useState(false);
+  const [marcelMood, setMarcelMood]         = useState<MarcelMood>('bienvenue');
+  const [marcelQuote, setMarcelQuote]       = useState('');
   const [marcelBaguette, setMarcelBaguette] = useState(false);
   const marcelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevBallCount = useRef(0);
@@ -44,86 +155,62 @@ export default function GameScreen() {
     mood: MarcelMood,
     quote?: string,
     baguette = false,
-    autoHideMs = 4500,
+    autoHideMs = 4000,
   ) => {
     if (marcelTimer.current) clearTimeout(marcelTimer.current);
     setMarcelMood(mood);
     setMarcelQuote(quote ?? pickQuote(mood));
     setMarcelBaguette(baguette);
     setMarcelVisible(true);
-    if (autoHideMs > 0) {
-      marcelTimer.current = setTimeout(() => setMarcelVisible(false), autoHideMs);
-    }
+    marcelTimer.current = setTimeout(() => setMarcelVisible(false), autoHideMs);
   }, []);
 
-  const hideMarcel = useCallback(() => {
-    if (marcelTimer.current) clearTimeout(marcelTimer.current);
-    setMarcelVisible(false);
-  }, []);
-
-  // ── Nettoyage ──────────────────────────────────────────────────────────────
+  // ── Nettoyage ─────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       reset();
+      stopTimer();
       if (marcelTimer.current) clearTimeout(marcelTimer.current);
     };
   }, []);
 
-  // ── Déclencheurs Marcel ────────────────────────────────────────────────────
+  // ── Déclencheurs Marcel ───────────────────────────────────────────────────
   useEffect(() => {
     if (!card) return;
 
-    // 1. Bingo (priorité max — avec baguette !)
     if (checkResult.bingo && !prevBingo.current) {
       prevBingo.current = true;
-      showMarcel('bingo', undefined, true, 7000);
-      Alert.alert(
-        '🎉 BINGO !',
-        'Marcel vous félicite ! Votre coupon vous attend dans l\'onglet Coupons.',
-        [{ text: 'Voir mon coupon 🎟', style: 'default' }]
-      );
+      showMarcel('bingo', undefined, true, 5000);
+      setConfettiVisible(true);
       return;
     }
-
-    // 2. Quine
     if (checkResult.quine && !prevQuine.current) {
       prevQuine.current = true;
       showMarcel('quine', undefined, false, 4000);
       return;
     }
-
-    // 3. Ligne
     if (checkResult.line && !prevLine.current) {
       prevLine.current = true;
       showMarcel('ligne', undefined, false, 3500);
       return;
     }
 
-    // 4. Conseil aléatoire tous les N boules
     const count = ballsDrawn.length;
-    if (
-      count > 0 &&
-      count !== prevBallCount.current &&
-      count % CONSEIL_FREQUENCY === 0 &&
-      !checkResult.bingo
-    ) {
+    if (count > 0 && count !== prevBallCount.current && count % CONSEIL_FREQUENCY === 0 && !checkResult.bingo) {
       showMarcel('conseil', undefined, false, 4000);
     }
     prevBallCount.current = count;
-
   }, [ballsDrawn, checkResult]);
 
   const lastBall = ballsDrawn[ballsDrawn.length - 1];
 
-  // ── Écran de départ ────────────────────────────────────────────────────────
+  // ── Écran de départ ───────────────────────────────────────────────────────
   if (!card) {
     return (
       <View style={styles.startContainer}>
         <View style={styles.ballDecorRow}>
           {[7, 13, 28, 42, 55, 67, 81].map(n => (
-            <View key={n} style={[styles.ballDecor, { backgroundColor: ballColor(n) }]}>
-              <Text style={styles.ballDecorText}>{n}</Text>
-            </View>
+            <LotoBall key={n} number={n} size={38} />
           ))}
         </View>
 
@@ -139,10 +226,7 @@ export default function GameScreen() {
           style={[styles.startBtn, isLoading && { opacity: 0.6 }]}
           onPress={() => {
             startDailyGame().catch((e: Error) => {
-              Alert.alert(
-                'Serveur indisponible',
-                'Impossible de démarrer la partie.\nVérifiez que le serveur API est lancé (pnpm --filter api dev).\n\n' + e.message,
-              );
+              Alert.alert('Serveur indisponible', e.message);
             });
           }}
           disabled={isLoading}
@@ -158,27 +242,23 @@ export default function GameScreen() {
     );
   }
 
-  // ── Partie en cours ────────────────────────────────────────────────────────
+  // ── Partie en cours ───────────────────────────────────────────────────────
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
 
-        {/* En-tête bois */}
+        {/* En-tête */}
         <View style={styles.woodHeader}>
           <Text style={styles.woodHeaderTitle}>🎰 Loto du Jour</Text>
           <Text style={styles.woodHeaderSub}>
-            {ballsDrawn.length === 0
-              ? 'Tirez votre première boule !'
-              : `Boule n° ${ballsDrawn.length} · Dernière : ${lastBall}`}
+            {ballsDrawn.length === 0 ? 'Prêt à tirer !' : `Boule n°${ballsDrawn.length} · Dernière : ${lastBall}`}
           </Text>
         </View>
 
-        {/* Dernière boule */}
+        {/* Dernière boule (grande) */}
         {lastBall !== undefined && (
           <View style={styles.lastBallContainer}>
-            <View style={[styles.lastBall, { backgroundColor: ballColor(lastBall) }]}>
-              <Text style={styles.lastBallNumber}>{lastBall}</Text>
-            </View>
+            <LotoBall number={lastBall} size={96} />
             <Text style={styles.lastBallLabel}>Dernière boule</Text>
           </View>
         )}
@@ -190,7 +270,7 @@ export default function GameScreen() {
           <ResultBadge label="BINGO!" active={checkResult.bingo} color="#E53935" />
         </View>
 
-        {/* Carton de loto */}
+        {/* Carton */}
         <View style={styles.cartonFrame}>
           <View style={styles.cartonHeader}>
             <Text style={styles.cartonTitle}>✦ CARTON N°1 ✦</Text>
@@ -207,16 +287,12 @@ export default function GameScreen() {
                       style={[
                         styles.cartonCell,
                         cell === null && styles.cartonCellBlank,
-                        isDrawn && { backgroundColor: ballColor(cell!), borderColor: 'transparent' },
                       ]}
                     >
                       {cell !== null && (
-                        <Text style={[
-                          styles.cartonCellText,
-                          isDrawn && styles.cartonCellTextDrawn,
-                        ]}>
-                          {cell}
-                        </Text>
+                        isDrawn
+                          ? <LotoBall number={cell} size={36} />
+                          : <Text style={styles.cartonCellText}>{cell}</Text>
                       )}
                     </View>
                   );
@@ -226,29 +302,50 @@ export default function GameScreen() {
           </View>
         </View>
 
-        {/* Bouton tirer */}
+        {/* Bouton tirer + timer */}
         {!gameOver && (
-          <TouchableOpacity
-            style={[styles.drawBtn, isLoading && styles.drawBtnDisabled]}
-            onPress={drawBall}
-            disabled={isLoading}
-          >
-            {isLoading
-              ? <ActivityIndicator color="#fff" size="large" />
-              : <Text style={styles.drawBtnText}>Tirer une boule 🔵</Text>
-            }
-          </TouchableOpacity>
+          <View style={styles.drawSection}>
+            {/* Barre de progression timer */}
+            <View style={styles.timerBarBg}>
+              <Animated.View style={[styles.timerBarFill, {
+                width: timerProgress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+              }]} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.drawBtn, isLoading && styles.drawBtnDisabled]}
+              onPress={() => {
+                stopTimer();
+                timerProgress.setValue(1);
+                drawBall();
+              }}
+              disabled={isLoading}
+            >
+              {isLoading
+                ? <ActivityIndicator color="#fff" size="large" />
+                : (
+                  <View style={styles.drawBtnInner}>
+                    <Text style={styles.drawBtnText}>Tirer une boule</Text>
+                    {timerActive && (
+                      <View style={styles.countdownBadge}>
+                        <Text style={styles.countdownText}>{countdown}s</Text>
+                      </View>
+                    )}
+                  </View>
+                )
+              }
+            </TouchableOpacity>
+            <Text style={styles.timerHint}>⏱ Tirage automatique dans {countdown}s</Text>
+          </View>
         )}
 
-        {/* Historique */}
+        {/* Historique boules */}
         {ballsDrawn.length > 0 && (
           <>
             <Text style={styles.historyLabel}>Boules sorties ({ballsDrawn.length})</Text>
             <View style={styles.ballsHistory}>
               {ballsDrawn.map((b, i) => (
-                <View key={i} style={[styles.historyBall, { backgroundColor: ballColor(b) }]}>
-                  <Text style={styles.historyBallText}>{b}</Text>
-                </View>
+                <LotoBall key={i} number={b} size={40} />
               ))}
             </View>
           </>
@@ -262,27 +359,29 @@ export default function GameScreen() {
           </View>
         )}
 
-        {/* Espace pour Marcel */}
-        <View style={{ height: 160 }} />
+        <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* Marcel en overlay flottant */}
+      {/* Marcel en coin haut-droit */}
       <Marcel
         visible={marcelVisible}
         mood={marcelMood}
         quote={marcelQuote}
         withBaguette={marcelBaguette}
-        onDismiss={hideMarcel}
+      />
+
+      {/* Confetti BINGO */}
+      <ConfettiBingo
+        visible={confettiVisible}
+        reward={couponAwarded ? 'coupon' : 'xp'}
+        onFinished={() => setConfettiVisible(false)}
       />
     </View>
   );
 }
 
 // ── Composants ────────────────────────────────────────────────────────────────
-
-function ResultBadge({ label, active, color }: {
-  label: string; active: boolean; color: string;
-}) {
+function ResultBadge({ label, active, color }: { label: string; active: boolean; color: string }) {
   return (
     <View style={[styles.badge, active && { backgroundColor: color, borderColor: color }]}>
       <Text style={[styles.badgeText, active && { color: '#fff' }]}>{label}</Text>
@@ -291,7 +390,6 @@ function ResultBadge({ label, active, color }: {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   startContainer: {
     flex: 1, backgroundColor: Colors.background,
@@ -299,36 +397,19 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
   },
   ballDecorRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.xl },
-  ballDecor: {
-    width: 38, height: 38, borderRadius: 19,
-    justifyContent: 'center', alignItems: 'center',
-    ...Shadow.card,
-  },
-  ballDecorText: { fontSize: 11, fontWeight: '800', color: '#fff' },
 
   marcelCard: {
-    backgroundColor: Colors.wood,
-    borderRadius: Radius.lg,
+    backgroundColor: Colors.wood, borderRadius: Radius.lg,
     borderWidth: 2, borderColor: Colors.woodGrain,
-    padding: Spacing.xl,
-    alignItems: 'center',
-    marginBottom: Spacing.xl,
-    width: '100%',
-    ...Shadow.card,
+    padding: Spacing.xl, alignItems: 'center',
+    marginBottom: Spacing.xl, width: '100%', ...Shadow.card,
   },
   marcelMic: { fontSize: 40, marginBottom: Spacing.sm },
-  marcelName: {
-    fontSize: 12, fontWeight: '900', color: Colors.woodGrain,
-    letterSpacing: 4, marginBottom: Spacing.sm,
-  },
-  marcelQuote: {
-    fontSize: 17, color: Colors.parchment,
-    textAlign: 'center', fontStyle: 'italic', lineHeight: 26,
-  },
+  marcelName: { fontSize: 12, fontWeight: '900', color: Colors.woodGrain, letterSpacing: 4, marginBottom: Spacing.sm },
+  marcelQuote: { fontSize: 17, color: Colors.parchment, textAlign: 'center', fontStyle: 'italic', lineHeight: 26 },
 
   startBtn: {
-    backgroundColor: Colors.orange,
-    borderRadius: Radius.lg,
+    backgroundColor: Colors.orange, borderRadius: Radius.lg,
     paddingVertical: 20, paddingHorizontal: Spacing.xl,
     width: '100%', alignItems: 'center',
     marginBottom: Spacing.md, ...Shadow.card,
@@ -348,14 +429,7 @@ const styles = StyleSheet.create({
   woodHeaderSub: { fontSize: 13, color: Colors.textWood, marginTop: 2 },
 
   lastBallContainer: { alignItems: 'center', paddingVertical: Spacing.lg },
-  lastBall: {
-    width: 88, height: 88, borderRadius: 44,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 4, borderColor: 'rgba(255,255,255,0.25)',
-    ...Shadow.card, shadowRadius: 14, shadowOpacity: 0.5,
-  },
-  lastBallNumber: { fontSize: 36, fontWeight: '900', color: '#fff' },
-  lastBallLabel: { fontSize: 12, color: Colors.textMuted, marginTop: 6, letterSpacing: 1 },
+  lastBallLabel: { fontSize: 12, color: Colors.textMuted, marginTop: 10, letterSpacing: 1 },
 
   badgesRow: {
     flexDirection: 'row', justifyContent: 'center',
@@ -389,31 +463,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   cartonCellBlank: { backgroundColor: 'rgba(164,130,80,0.15)', borderColor: 'transparent' },
-  cartonCellText: { fontSize: 16, fontWeight: '800', color: Colors.textDark },
-  cartonCellTextDrawn: { color: '#fff' },
+  cartonCellText: { fontSize: 15, fontWeight: '800', color: Colors.textDark },
+
+  drawSection: { marginHorizontal: Spacing.lg, marginBottom: Spacing.lg },
+  timerBarBg: { height: 4, backgroundColor: Colors.woodMid, borderRadius: 2, marginBottom: 10, overflow: 'hidden' },
+  timerBarFill: { height: '100%', backgroundColor: Colors.orange, borderRadius: 2 },
 
   drawBtn: {
-    backgroundColor: Colors.orange,
-    marginHorizontal: Spacing.lg, borderRadius: Radius.lg,
-    paddingVertical: 20, alignItems: 'center',
-    marginBottom: Spacing.lg, ...Shadow.card,
+    backgroundColor: Colors.orange, borderRadius: Radius.lg,
+    paddingVertical: 20, alignItems: 'center', ...Shadow.card,
   },
   drawBtnDisabled: { opacity: 0.6 },
+  drawBtnInner: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   drawBtnText: { fontSize: 22, fontWeight: '800', color: '#fff' },
+  countdownBadge: {
+    backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 12,
+    paddingHorizontal: 10, paddingVertical: 3,
+  },
+  countdownText: { fontSize: 16, fontWeight: '900', color: '#fff' },
+  timerHint: { fontSize: 12, color: Colors.textMuted, textAlign: 'center', marginTop: 6 },
 
-  historyLabel: {
-    fontSize: 13, fontWeight: '700', color: Colors.textMuted,
-    marginHorizontal: Spacing.lg, marginBottom: Spacing.sm,
-  },
-  ballsHistory: {
-    flexDirection: 'row', flexWrap: 'wrap',
-    gap: 6, marginHorizontal: Spacing.lg, marginBottom: Spacing.lg,
-  },
-  historyBall: {
-    width: 40, height: 40, borderRadius: 20,
-    justifyContent: 'center', alignItems: 'center', ...Shadow.card,
-  },
-  historyBallText: { fontSize: 12, fontWeight: '800', color: '#fff' },
+  historyLabel: { fontSize: 13, fontWeight: '700', color: Colors.textMuted, marginHorizontal: Spacing.lg, marginBottom: Spacing.sm },
+  ballsHistory: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: Spacing.lg, marginBottom: Spacing.lg },
 
   gameOverCard: {
     marginHorizontal: Spacing.lg,
