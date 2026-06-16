@@ -120,6 +120,17 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (pinned) {
     return { filePath: pinned, type: 'sourceFile' };
   }
+
+  // Fix pnpm virtual store: expo/AppEntry.js at deep .pnpm path resolves
+  // '../../App' to the wrong location (not the project root).
+  // Intercept ANY '../../App' import — only expo/AppEntry.js uses this pattern.
+  if (moduleName === '../../App') {
+    const appTsx = path.resolve(projectRoot, 'App.tsx');
+    if (fs.existsSync(appTsx)) {
+      return { filePath: appTsx, type: 'sourceFile' };
+    }
+  }
+
   return context.resolveRequest(context, moduleName, platform);
 };
 
