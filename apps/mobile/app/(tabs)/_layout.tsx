@@ -5,8 +5,8 @@ import LotoBallIcon from '@/components/ui/LotoBallIcon';
 import { useGameStore } from '@/stores/gameStore';
 
 export default function TabsLayout() {
-  const gameOver   = useGameStore(s => s.gameOver);
-  const card       = useGameStore(s => s.card);
+  const gameOver    = useGameStore(s => s.gameOver);
+  const card        = useGameStore(s => s.card);
   const playedToday = card !== null || gameOver;
 
   return (
@@ -23,7 +23,7 @@ export default function TabsLayout() {
         },
         tabBarActiveTintColor: Colors.orange,
         tabBarInactiveTintColor: Colors.textWood,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 2 },
       }}
     >
       <Tabs.Screen
@@ -63,6 +63,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="mode-libre"
+        options={{
+          title: 'Libre',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="infinite" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="coupons"
         options={{
           title: 'Coupons',
@@ -80,10 +89,7 @@ export default function TabsLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="merchant"
-        options={{ href: null }}
-      />
+      <Tabs.Screen name="merchant" options={{ href: null }} />
     </Tabs>
   );
 }

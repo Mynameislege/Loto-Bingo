@@ -4,6 +4,8 @@ import {
   ScrollView, Alert, Switch,
 } from 'react-native';
 import { useAuthStore } from '@/stores/authStore';
+import { usePremiumStore } from '@/stores/premiumStore';
+import PremiumCard from '@/components/PremiumCard';
 import { Colors, Typography, Spacing, Radius, Shadow } from '@/components/ui/tokens';
 import { api } from '@/services/api';
 
@@ -21,6 +23,7 @@ interface Stats {
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuthStore();
+  const { configure: configurePremium, isPremium } = usePremiumStore();
   const [activeTab, setActiveTab] = useState<Tab>('profil');
   const [sounds, setSounds] = useState(true);
   const [notifications, setNotifications] = useState(true);
@@ -34,7 +37,9 @@ export default function ProfileScreen() {
     api.get<Stats>('/auth/stats')
       .then(setStats)
       .catch(() => {}); // silencieux si API indisponible
-  }, [user]);
+    // Initialiser RevenueCat
+    if (user.uid) configurePremium(user.uid).catch(() => {});
+  }, [user, configurePremium]);
 
   const handleSignOut = () => {
     Alert.alert(
@@ -58,8 +63,13 @@ export default function ProfileScreen() {
       {/* En-tête bois */}
       <View style={styles.woodHeader}>
         <View style={styles.woodHeaderInner}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarLetter}>{initiale}</Text>
+          <View>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarLetter}>{initiale}</Text>
+            </View>
+            {isPremium && (
+              <View style={styles.premiumBadge}><Text style={styles.premiumBadgeTxt}>★ PREMIUM</Text></View>
+            )}
           </View>
           <Text style={styles.name}>{displayName}</Text>
           <Text style={styles.email}>{email}</Text>
@@ -113,6 +123,9 @@ export default function ProfileScreen() {
                 <View style={[styles.xpFill, { width: `${Math.min((xp / xpNext) * 100, 100)}%` }]} />
               </View>
             </View>
+
+            {/* Pass Premium */}
+            <PremiumCard />
 
             {/* Compte */}
             <View style={styles.woodFrame}>
@@ -441,4 +454,11 @@ const styles = StyleSheet.create({
   },
   signOutText: { fontSize: 18, fontWeight: '700', color: Colors.error },
   version: { fontSize: 13, color: Colors.textMuted, textAlign: 'center', marginTop: 4 },
+  premiumBadge: {
+    position: 'absolute', bottom: -6, left: '50%',
+    transform: [{ translateX: -32 }],
+    backgroundColor: Colors.gold, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  premiumBadgeTxt: { fontSize: 10, fontWeight: '900', color: Colors.navy, letterSpacing: 0.5 },
 });

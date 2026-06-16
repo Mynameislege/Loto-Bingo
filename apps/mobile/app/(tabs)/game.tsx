@@ -8,6 +8,7 @@ import { Colors, Spacing, Radius, Shadow } from '@/components/ui/tokens';
 import Marcel, { type MarcelMood, pickQuote } from '@/components/Marcel';
 import ConfettiBingo from '@/components/ConfettiBingo';
 import { useSound } from '@/hooks/useSound';
+import { getCurrentSeasonalEvent, getMarcelSeasonalPhrase } from '@/services/seasonalEvents';
 
 // ── Boules style bingo — lettre B/I/N/G/O + numéro (loto français 1–90) ──────
 // B = 1-18  (rouge)
@@ -271,7 +272,12 @@ export default function GameScreen() {
           <Text style={styles.marcelMic}>🎙</Text>
           <Text style={styles.marcelName}>MARCEL</Text>
           <Text style={styles.marcelQuote}>
-            « Mesdames et messieurs, bienvenue au Loto du Jour !{'\n'}Les boules sont prêtes — êtes-vous prêts ? »
+            {(() => {
+              const ev = getCurrentSeasonalEvent();
+              return ev
+                ? `${ev.emoji}  ${getMarcelSeasonalPhrase(ev)}`
+                : `« Mesdames et messieurs, bienvenue au Loto du Jour !\nLes boules sont prêtes — êtes-vous prêts ? »`;
+            })()}
           </Text>
         </View>
 

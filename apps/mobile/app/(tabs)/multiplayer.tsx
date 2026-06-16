@@ -1,542 +1,634 @@
 /**
  * Onglet Multijoueur — Loto Seniors
- * Spec vision produit v6 :
- *  - 10 joueurs total (réels + fantômes)
- *  - Matchmaking garanti < 15 s : T+0 clic, T+10 fantômes, T+15 premier tirage
- *  - Coupon UNIQUEMENT au 1er Bingo
- *  - Salle Famille : code d'invitation, chat vocal WebRTC (à venir)
+ * Socket.io temps réel, boules B/I/N/G/O, Marcel, carton interactif.
+ * Vision produit v6 :
+ *  - 10 joueurs (réels + fantômes), matchmaking < 15s
+ *  - Coupon au 1er Bingo uniquement
+ *  - Salle Famille : code invitation + WebRTC (Agora — prochainement)
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  TextInput, ScrollView, ActivityIndicator, Alert,
+  TextInput, ScrollView, ActivityIndicator, Alert, Animated,
 } from 'react-native';
+import { io, Socket } from 'socket.io-client';
 import { Ionicons } from '@expo/vector-icons';
+import { generateCard, checkCard } from '@loto-seniors/game-engine';
+import type { Card, CheckResult } from '@loto-seniors/game-engine';
 import { useAuthStore } from '@/stores/authStore';
-import { Colors, Spacing, Radius, Shadow, Typography } from '@/components/ui/tokens';
+import { Colors, Spacing, Radius, Shadow } from '@/components/ui/tokens';
+import Marcel, { type MarcelMood, pickQuote } from '@/components/Marcel';
+import ConfettiBingo from '@/components/ConfettiBingo';
+import { useSound } from '@/hooks/useSound';
 
-const GHOST_NAMES = [
-  'Jean-Pierre', 'Marie-Hélène', 'Colette', 'Roger', 'Germaine',
-  'Marcel', 'Yvette', 'René', 'Louisette', 'Gaston',
-  'Simone', 'André', 'Madeleine', 'Fernand', 'Odette',
-  'Bernard', 'Huguette', 'Gérard', 'Monique', 'Raymond',
-];
-
-function pickGhosts(count: number, exclude: string): string[] {
-  const pool = GHOST_NAMES.filter(n => n !== exclude);
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
-}
-
-interface Player {
-  name: string;
-  isGhost: boolean;
-  isHost?: boolean;
-  hasLine?: boolean;
-  hasQuine?: boolean;
-  hasBingo?: boolean;
-}
-
-type Screen = 'menu' | 'family_join' | 'waiting_public' | 'waiting_family' | 'in_game';
-
+// ── Constantes matchmaking ────────────────────────────────────────────────────
 const TOTAL_PLAYERS    = 10;
 const GHOST_FILL_DELAY = 10_000;
 const GAME_START_DELAY = 15_000;
+const AUTO_DRAW_SECS   = 4;
 
+const GHOST_NAMES = [
+  'Jean-Pierre','Marie-Hélène','Colette','Roger','Germaine',
+  'Marcel','Yvette','René','Louisette','Gaston',
+  'Simone','André','Madeleine','Fernand','Odette',
+  'Bernard','Huguette','Gérard','Monique','Raymond',
+];
+function pickGhosts(n: number, exclude: string) {
+  return [...GHOST_NAMES].filter(g => g !== exclude).sort(() => Math.random()-0.5).slice(0, n);
+}
+
+// ── Boules B/I/N/G/O ─────────────────────────────────────────────────────────
+interface BallSpec { letter:string; bg:string; bg2:string; border:string; textColor:string; bandColor:string; }
+function getBallSpec(n: number): BallSpec {
+  if (n<=18) return { letter:'B', bg:'#E53935', bg2:'#B71C1C', border:'#8B0000', textColor:'#fff', bandColor:'rgba(255,255,255,0.92)' };
+  if (n<=36) return { letter:'I', bg:'#1E88E5', bg2:'#0D47A1', border:'#083180', textColor:'#fff', bandColor:'rgba(255,255,255,0.92)' };
+  if (n<=54) return { letter:'N', bg:'#F5F5F5', bg2:'#BDBDBD', border:'#9E9E9E', textColor:'#212121', bandColor:'rgba(100,100,100,0.15)' };
+  if (n<=72) return { letter:'G', bg:'#43A047', bg2:'#1B5E20', border:'#0A3D0A', textColor:'#fff', bandColor:'rgba(255,255,255,0.92)' };
+  return             { letter:'O', bg:'#FB8C00', bg2:'#E65100', border:'#BF360C', textColor:'#fff', bandColor:'rgba(255,255,255,0.92)' };
+}
+function LotoBall({ number, size=40 }: { number:number; size?:number }) {
+  const spec = getBallSpec(number);
+  const bandH=size*0.38; const bTop=(size-bandH)/2;
+  const ls=size<44?8:11; const ns=size<44?11:16;
+  return (
+    <View style={[bst.outer,{width:size,height:size,borderRadius:size/2,backgroundColor:spec.bg,borderColor:spec.border,shadowColor:spec.bg2}]}>
+      <View style={[bst.band,{top:bTop,height:bandH,backgroundColor:spec.bandColor}]}/>
+      <View style={[bst.shine,{width:size*0.26,height:size*0.18,top:size*0.12,left:size*0.18}]}/>
+      <View style={bst.content}>
+        <Text style={[bst.letter,{fontSize:ls,color:spec.textColor}]}>{spec.letter}</Text>
+        <Text style={[bst.num,   {fontSize:ns,color:spec.textColor}]}>{number}</Text>
+      </View>
+    </View>
+  );
+}
+const bst=StyleSheet.create({
+  outer:{justifyContent:'center',alignItems:'center',borderWidth:2,shadowOffset:{width:0,height:3},shadowOpacity:0.4,shadowRadius:6,elevation:6,overflow:'hidden'},
+  band:{position:'absolute',left:0,right:0},
+  shine:{position:'absolute',borderRadius:50,backgroundColor:'rgba(255,255,255,0.55)'},
+  content:{alignItems:'center',justifyContent:'center',zIndex:2},
+  letter:{fontWeight:'900',lineHeight:14},
+  num:{fontWeight:'900',lineHeight:18,marginTop:-2},
+});
+
+// ── Carton ────────────────────────────────────────────────────────────────────
+function CardGrid({ card, drawn, result }: { card:Card; drawn:number[]; result:CheckResult }) {
+  const drawnSet = new Set(drawn);
+  const completedRows = card.map(row => row.filter((c): c is number => c!==null).every(n => drawnSet.has(n)));
+  return (
+    <View style={cst.grid}>
+      {card.map((row, ri) => (
+        <View key={ri} style={[cst.row, completedRows[ri] && cst.rowDone]}>
+          {row.map((cell, ci) => {
+            const hit = cell!==null && drawnSet.has(cell);
+            return (
+              <View key={ci} style={[cst.cell, cell===null&&cst.blank, hit&&cst.hit]}>
+                {cell!==null && (hit ? <LotoBall number={cell} size={28}/> : <Text style={cst.num}>{cell}</Text>)}
+              </View>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
+}
+const cst=StyleSheet.create({
+  grid:{marginHorizontal:Spacing.lg,marginBottom:12,borderRadius:Radius.md,overflow:'hidden',backgroundColor:Colors.surface,...Shadow.card},
+  row:{flexDirection:'row',borderBottomWidth:1,borderBottomColor:Colors.woodMid},
+  rowDone:{backgroundColor:'rgba(67,160,71,0.15)'},
+  cell:{flex:1,aspectRatio:1,justifyContent:'center',alignItems:'center',borderRightWidth:1,borderRightColor:Colors.woodMid},
+  blank:{backgroundColor:Colors.woodMid,opacity:0.3},
+  hit:{backgroundColor:'rgba(240,128,0,0.12)'},
+  num:{fontSize:13,fontWeight:'700',color:Colors.text},
+});
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Player { name:string; isGhost:boolean; isHost?:boolean; hasLine?:boolean; hasQuine?:boolean; hasBingo?:boolean; }
+type Screen = 'menu'|'family_join'|'waiting_public'|'waiting_family'|'in_game';
+
+// ── Screen principal ───────────────────────────────────────────────────────────
 export default function MultiplayerScreen() {
   const { user } = useAuthStore();
-  const [screen, setScreen] = useState<Screen>('menu');
-  const [roomCode, setRoomCode] = useState('');
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
-  const [bingoWinner, setBingoWinner] = useState<string | null>(null);
+  const { play, playAmbience, stopAmbience } = useSound();
 
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const fillGhostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [screen,      setScreen]     = useState<Screen>('menu');
+  const [roomCode,    setRoomCode]   = useState('');
+  const [players,     setPlayers]    = useState<Player[]>([]);
+  const [loading,     setLoading]    = useState(false);
+  const [countdown,   setCountdown]  = useState<number|null>(null);
+  const [roomId,      setRoomId]     = useState<string|null>(null);
+  const [sessionId,   setSessionId]  = useState<string|null>(null);
+
+  // Game state (in_game)
+  const [card,        setCard]       = useState<Card|null>(null);
+  const [drawn,       setDrawn]      = useState<number[]>([]);
+  const [result,      setResult]     = useState<CheckResult>({line:false,quine:false,bingo:false});
+  const [bingoWinner, setBingoWinner]= useState<string|null>(null);
+  const [couponWon,   setCouponWon]  = useState(false);
+  const [drawCountdown, setDrawCountdown] = useState(AUTO_DRAW_SECS);
+  const [marcelMsg,   setMarcelMsg]  = useState<string|null>(null);
+  const [marcelMood,  setMarcelMood] = useState<MarcelMood>('neutral');
+  const [marcelVis,   setMarcelVis]  = useState(false);
+
+  // Refs
+  const socketRef      = useRef<Socket|null>(null);
+  const countdownRef   = useRef<ReturnType<typeof setInterval>|null>(null);
+  const fillRef        = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const startRef       = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const drawRef        = useRef<ReturnType<typeof setInterval>|null>(null);
+  const marcelTimer    = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const drawnRef       = useRef<number[]>([]);
+  const resultRef      = useRef<CheckResult>({line:false,quine:false,bingo:false});
+  const claimedRef     = useRef({line:false,quine:false,bingo:false});
 
   function clearTimers() {
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    if (fillGhostTimer.current) clearTimeout(fillGhostTimer.current);
-    if (startTimer.current) clearTimeout(startTimer.current);
+    [countdownRef, fillRef, startRef, drawRef].forEach(r => {
+      if (r.current) { clearInterval(r.current as ReturnType<typeof setInterval>); r.current=null; }
+    });
+  }
+  useEffect(() => () => { clearTimers(); socketRef.current?.disconnect(); }, []);
+
+  function showMarcel(msg:string, mood:MarcelMood, ms=4000) {
+    if (marcelTimer.current) clearTimeout(marcelTimer.current);
+    setMarcelMsg(msg); setMarcelMood(mood); setMarcelVis(true);
+    marcelTimer.current = setTimeout(() => setMarcelVis(false), ms);
   }
 
-  useEffect(() => () => clearTimers(), []);
+  // ── Socket.io ──────────────────────────────────────────────────────────────
+  function connectSocket(rid:string, sid:string, firebaseToken:string) {
+    const socket = io(process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000', {
+      auth: { token: firebaseToken },
+      transports: ['websocket'],
+    });
+    socketRef.current = socket;
 
-  function handleJoinPublic() {
-    if (!user) return;
-    const myName = user.displayName ?? 'Vous';
-    setPlayers([{ name: myName, isGhost: false, isHost: true }]);
-    setScreen('waiting_public');
-    setCountdown(15);
+    socket.on('connect', () => {
+      socket.emit('room:join', { roomId: rid });
+    });
 
-    let c = 15;
-    countdownRef.current = setInterval(() => {
-      c -= 1;
-      setCountdown(c);
-      if (c <= 0 && countdownRef.current) clearInterval(countdownRef.current);
-    }, 1000);
+    socket.on('game:ball_drawn', ({ ball }: { ball:number }) => {
+      play('ball_draw');
+      const newDrawn = [...drawnRef.current, ball];
+      drawnRef.current = newDrawn;
+      setDrawn([...newDrawn]);
 
-    fillGhostTimer.current = setTimeout(() => {
-      setPlayers(prev => {
-        const realCount = prev.filter(p => !p.isGhost).length;
-        const ghostCount = TOTAL_PLAYERS - realCount;
-        const ghosts = pickGhosts(ghostCount, myName).map(name => ({ name, isGhost: true }));
-        return [...prev, ...ghosts];
-      });
-    }, GHOST_FILL_DELAY);
+      if (sid) {
+        const newResult = checkCard(card!, newDrawn);
+        resultRef.current = newResult;
+        setResult(newResult);
+        // Auto-claim
+        if (newResult.line  && !claimedRef.current.line)  { claimedRef.current.line=true;  socket.emit('game:claim_line',  { sessionId: sid }); play('line');  showMarcel(pickQuote('tension'), 'happy', 3000); }
+        if (newResult.quine && !claimedRef.current.quine) { claimedRef.current.quine=true; socket.emit('game:claim_quine', { sessionId: sid }); play('quine'); showMarcel('✨ QUINE ! Encore un effort !', 'happy', 4000); }
+        if (newResult.bingo && !claimedRef.current.bingo) { claimedRef.current.bingo=true; socket.emit('game:claim_bingo', { sessionId: sid }); }
+      }
+    });
 
-    startTimer.current = setTimeout(() => {
-      setScreen('in_game');
-    }, GAME_START_DELAY);
+    socket.on('host:speak', ({ text }: { text:string; phraseId:string; audioKey?:string }) => {
+      showMarcel(text, 'neutral', 5000);
+    });
+
+    socket.on('game:result_update', ({ claimType, couponAwarded: ca }: { claimType:string; valid:boolean; couponAwarded:boolean }) => {
+      if (claimType === 'bingo') { play('bingo'); setCouponWon(ca); }
+    });
+
+    socket.on('room:player_joined', ({ name }: { name:string }) => {
+      setPlayers(prev => prev.some(p => p.name===name) ? prev : [...prev, { name, isGhost:false }]);
+    });
+
+    socket.on('game:over', ({ winnerId, couponAwarded: ca }: { winnerId:string; couponAwarded:boolean }) => {
+      play('bingo');
+      const myUid = user?.uid;
+      const isMe  = winnerId === myUid;
+      setBingoWinner(isMe ? (user?.displayName ?? 'Vous') : winnerId);
+      setCouponWon(isMe && ca);
+      clearTimers();
+      stopAmbience();
+    });
   }
 
-  async function handleCreateFamily() {
+  // ── Matchmaking public ──────────────────────────────────────────────────────
+  async function handleJoinPublic() {
     if (!user) return;
     setLoading(true);
+    const myName = user.displayName ?? 'Joueur';
+
     try {
-      const token = await user.getIdToken();
-      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/room/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ mode: 'multiplayer_family', maxPlayers: TOTAL_PLAYERS }),
-      });
-      const data = await res.json() as { roomCode?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? 'Erreur serveur');
-      setRoomCode(data.roomCode ?? '');
-      setPlayers([{ name: user.displayName ?? 'Vous', isGhost: false, isHost: true }]);
-      setScreen('waiting_family');
+      const firebaseToken = await user.getIdToken();
+      // Appel API pour rejoindre une salle publique
+      let rid: string;
+      let sid: string;
+      let serverCard: Card | undefined;
+      try {
+        const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/room/join`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json', Authorization:`Bearer ${firebaseToken}`},
+          body:JSON.stringify({ mode:'multiplayer_public' }),
+        });
+        if (res.ok) {
+          const data = await res.json() as { roomId:string; sessionId:string; card?:Card };
+          rid = data.roomId; sid = data.sessionId; serverCard = data.card;
+        } else { throw new Error(); }
+      } catch {
+        // Fallback local si API indisponible
+        rid = `local_${Date.now()}`; sid = `local_sess_${Date.now()}`;
+      }
+
+      const gameCard = serverCard ?? generateCard();
+      setCard(gameCard); setRoomId(rid); setSessionId(sid);
+      drawnRef.current = []; claimedRef.current = {line:false,quine:false,bingo:false};
+      setPlayers([{ name:myName, isGhost:false, isHost:true }]);
+      setScreen('waiting_public');
+      setCountdown(15);
+      setLoading(false);
+
+      // Connexion socket
+      connectSocket(rid, sid, firebaseToken);
+
+      // Countdown UI
+      let c=15;
+      countdownRef.current = setInterval(() => {
+        c--; setCountdown(c);
+        if (c<=0 && countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current=null; }
+      }, 1000);
+
+      // T+10 : remplir fantômes
+      fillRef.current = setTimeout(() => {
+        setPlayers(prev => {
+          const realN = prev.filter(p=>!p.isGhost).length;
+          const ghosts = pickGhosts(TOTAL_PLAYERS-realN, myName).map(n=>({name:n,isGhost:true}));
+          return [...prev, ...ghosts];
+        });
+      }, GHOST_FILL_DELAY);
+
+      // T+15 : démarrer partie
+      startRef.current = setTimeout(() => {
+        setScreen('in_game');
+        playAmbience();
+        showMarcel(pickQuote('opening'), 'neutral', 5000);
+        // Tirage auto si mode local (pas de socket ball_drawn)
+        startLocalDraw();
+      }, GAME_START_DELAY);
+
     } catch (e: unknown) {
-      Alert.alert('Impossible de créer la salle', e instanceof Error ? e.message : String(e));
-    } finally {
+      Alert.alert('Erreur', e instanceof Error ? e.message : String(e));
       setLoading(false);
     }
+  }
+
+  // ── Tirage local (fallback sans socket) ──────────────────────────────────────
+  const sequenceRef = useRef<number[]>([]);
+  function startLocalDraw() {
+    if (socketRef.current?.connected) return; // socket gère le tirage
+    const seq = Array.from({length:90},(_,i)=>i+1).sort(()=>Math.random()-0.5);
+    sequenceRef.current = seq;
+    let drawn = 0;
+    setDrawCountdown(AUTO_DRAW_SECS);
+    let cd = AUTO_DRAW_SECS;
+    drawRef.current = setInterval(() => {
+      cd--;
+      setDrawCountdown(cd);
+      if (cd<=0) {
+        cd=AUTO_DRAW_SECS;
+        if (drawn>=seq.length || bingoWinner) { clearInterval(drawRef.current!); return; }
+        const ball = seq[drawn]!; drawn++;
+        play('ball_draw');
+        const newDrawn = [...drawnRef.current, ball];
+        drawnRef.current = newDrawn;
+        setDrawn([...newDrawn]);
+        if (card) {
+          const nr = checkCard(card, newDrawn);
+          resultRef.current = nr; setResult(nr);
+          if (nr.line && !claimedRef.current.line)  { claimedRef.current.line=true;  play('line');  showMarcel(pickQuote('tension'), 'happy', 3000); }
+          if (nr.quine && !claimedRef.current.quine){ claimedRef.current.quine=true; play('quine'); showMarcel('✨ QUINE !', 'happy', 3500); }
+          if (nr.bingo && !claimedRef.current.bingo){ claimedRef.current.bingo=true; play('bingo'); setBingoWinner(user?.displayName??'Vous'); setCouponWon(true); clearInterval(drawRef.current!); stopAmbience(); }
+        }
+        setDrawCountdown(AUTO_DRAW_SECS);
+      }
+    }, 1000);
+  }
+
+  // ── Salle Famille ─────────────────────────────────────────────────────────────
+  async function handleCreateFamily() {
+    if (!user) return; setLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/room/create-family`, {
+        method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+        body:JSON.stringify({}),
+      });
+      const data = await res.json() as { roomCode?:string; roomId?:string; error?:string };
+      if (!res.ok) throw new Error(data.error??'Erreur serveur');
+      setRoomCode(data.roomCode??''); setRoomId(data.roomId??null);
+      setPlayers([{name:user.displayName??'Vous',isGhost:false,isHost:true}]);
+      setScreen('waiting_family');
+      if (data.roomId) connectSocket(data.roomId, '', token);
+    } catch (e: unknown) { Alert.alert('Erreur', e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
   }
 
   async function handleJoinFamily() {
-    if (!user || !roomCode.trim()) return;
-    setLoading(true);
+    if (!user||!roomCode.trim()) return; setLoading(true);
     try {
       const token = await user.getIdToken();
       const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/room/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ mode: 'multiplayer_family', roomCode: roomCode.trim().toUpperCase() }),
+        method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+        body:JSON.stringify({ mode:'multiplayer_family', roomCode:roomCode.trim().toUpperCase() }),
       });
-      const data = await res.json() as { players?: string[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? 'Salle introuvable');
-      setPlayers((data.players ?? []).map((name, i) => ({ name, isGhost: false, isHost: i === 0 })));
-      setScreen('waiting_family');
-    } catch (e: unknown) {
-      Alert.alert('Impossible de rejoindre', e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
+      const data = await res.json() as { players?:string[]; roomId?:string; error?:string };
+      if (!res.ok) throw new Error(data.error??'Salle introuvable');
+      setPlayers((data.players??[]).map((n,i)=>({name:n,isGhost:false,isHost:i===0})));
+      setRoomId(data.roomId??null); setScreen('waiting_family');
+      if (data.roomId) connectSocket(data.roomId,'',token);
+    } catch (e: unknown) { Alert.alert('Erreur', e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
   }
 
   function handleLeave() {
-    clearTimers();
-    setScreen('menu');
-    setPlayers([]);
-    setRoomCode('');
-    setCountdown(null);
-    setBingoWinner(null);
+    clearTimers(); socketRef.current?.disconnect(); socketRef.current=null;
+    setScreen('menu'); setPlayers([]); setRoomCode(''); setCountdown(null);
+    setBingoWinner(null); setCouponWon(false); setDrawn([]); setCard(null);
+    setResult({line:false,quine:false,bingo:false}); setRoomId(null); setSessionId(null);
+    drawnRef.current=[]; claimedRef.current={line:false,quine:false,bingo:false};
+    stopAmbience();
   }
 
-  // ── Menu principal ───────────────────────────────────────────────────────────
-  if (screen === 'menu') {
-    return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Multijoueur</Text>
-          <Text style={styles.headerSub}>10 joueurs · Matchmaking garanti en moins de 15 secondes</Text>
-        </View>
+  function handleStartFamily() {
+    if (!card) setCard(generateCard());
+    drawnRef.current=[]; claimedRef.current={line:false,quine:false,bingo:false};
+    setDrawn([]); setResult({line:false,quine:false,bingo:false});
+    setBingoWinner(null); setCouponWon(false);
+    setScreen('in_game');
+    playAmbience();
+    showMarcel('Bienvenue en Salle Famille ! Marcel est là.', 'neutral', 5000);
+    startLocalDraw();
+  }
 
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="globe-outline" size={26} color={Colors.orange} />
-            <Text style={styles.cardTitle}>Partie Publique</Text>
-          </View>
-          <Text style={styles.cardDesc}>
-            Rejoignez une salle avec d'autres joueurs ou des joueurs fantômes. La partie démarre toujours en moins de 15 secondes, à 10 joueurs.
-          </Text>
-          <View style={styles.chips}>
-            <Chip icon="people"   label="10 joueurs" />
-            <Chip icon="flash"    label="Moins de 15 s" />
-            <Chip icon="ticket"   label="Coupon au 1er Bingo" />
-            <Chip icon="person"   label="Fantômes si nécessaire" />
-          </View>
-          <TouchableOpacity
-            style={[styles.primaryBtn, loading && { opacity: 0.6 }]}
-            onPress={handleJoinPublic}
-            disabled={loading}
-          >
-            <Text style={styles.primaryBtnText}>Trouver une partie</Text>
+  // ── Rendu ─────────────────────────────────────────────────────────────────────
+  if (screen==='menu') return <MenuScreen onJoinPublic={handleJoinPublic} onFamilyJoin={() => setScreen('family_join')} loading={loading}/>;
+
+  if (screen==='family_join') return (
+    <View style={st.container}>
+      <View style={st.header}>
+        <TouchableOpacity onPress={() => setScreen('menu')} style={st.back}><Ionicons name="close" size={22} color={Colors.parchment}/></TouchableOpacity>
+        <Text style={st.headerTitle}>Salle Famille</Text>
+      </View>
+      <ScrollView contentContainerStyle={{padding:Spacing.lg,gap:16}}>
+        <TouchableOpacity style={st.primaryBtn} onPress={handleCreateFamily} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff"/> : <Text style={st.primaryBtnTxt}>Créer une salle</Text>}
+        </TouchableOpacity>
+        <View style={st.card}>
+          <Text style={st.cardTitle}>Rejoindre avec un code</Text>
+          <TextInput value={roomCode} onChangeText={t => setRoomCode(t.toUpperCase())}
+            placeholder="CODE" style={st.codeInput} maxLength={6} autoCapitalize="characters"/>
+          <TouchableOpacity style={[st.primaryBtn,{marginTop:12}]} onPress={handleJoinFamily} disabled={loading||!roomCode.trim()}>
+            <Text style={st.primaryBtnTxt}>Rejoindre</Text>
           </TouchableOpacity>
         </View>
-
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="home-outline" size={26} color={Colors.gold} />
-            <Text style={styles.cardTitle}>Salle Famille</Text>
-          </View>
-          <Text style={styles.cardDesc}>
-            Créez une salle privée et invitez vos proches avec un code de 6 lettres. Chat vocal inclus (bientôt disponible).
-          </Text>
-          <View style={styles.chips}>
-            <Chip icon="people"      label="Jusqu'à 10 joueurs" />
-            <Chip icon="lock-closed" label="Salle privée" />
-            <Chip icon="mic"         label="Chat vocal (bientôt)" />
-            <Chip icon="gift"        label="Coupons à partager" />
-          </View>
-          <View style={styles.familyBtns}>
-            <TouchableOpacity
-              style={[styles.secondaryBtn, { flex: 1 }]}
-              onPress={handleCreateFamily}
-              disabled={loading}
-            >
-              <Text style={styles.secondaryBtnText}>Créer une salle</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.primaryBtn, { flex: 1 }]}
-              onPress={() => setScreen('family_join')}
-            >
-              <Text style={styles.primaryBtnText}>Rejoindre</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.ghostNote}>
-          <Text style={styles.ghostNoteTitle}>Les joueurs fantômes</Text>
-          <Text style={styles.ghostNoteText}>
-            Pour garantir une partie à 10 toujours en moins de 15 secondes, les places vides sont comblées par des joueurs fantômes — de vrais prénoms de seniors français (Jean-Pierre, Colette, Marie…) simulés par le serveur.
-          </Text>
-        </View>
-
-        <View style={{ height: 40 }} />
       </ScrollView>
-    );
-  }
+    </View>
+  );
 
-  // ── Rejoindre salle famille ─────────────────────────────────────────────────
-  if (screen === 'family_join') {
+  if (screen==='waiting_public') {
+    const total = players.length;
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleLeave} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.parchment} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Rejoindre une salle</Text>
+      <View style={st.container}>
+        <View style={st.header}>
+          <TouchableOpacity onPress={handleLeave} style={st.back}><Ionicons name="close" size={22} color={Colors.parchment}/></TouchableOpacity>
+          <Text style={st.headerTitle}>Recherche de salle…</Text>
         </View>
-        <View style={[styles.card, { margin: Spacing.lg }]}>
-          <Text style={styles.inputLabel}>Code de la salle (6 lettres)</Text>
-          <TextInput
-            style={styles.codeInput}
-            value={roomCode}
-            onChangeText={t => setRoomCode(t.toUpperCase().slice(0, 6))}
-            placeholder="ex : ABCD12"
-            placeholderTextColor={Colors.textMuted}
-            autoCapitalize="characters"
-            maxLength={6}
-          />
-          <TouchableOpacity
-            style={[styles.primaryBtn, (!roomCode || loading) && { opacity: 0.5 }]}
-            onPress={handleJoinFamily}
-            disabled={!roomCode || loading}
-          >
-            {loading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.primaryBtnText}>Rejoindre la salle</Text>
-            }
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // ── Salle d'attente publique ────────────────────────────────────────────────
-  if (screen === 'waiting_public') {
-    const totalSoFar = players.length;
-
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleLeave} style={styles.backBtn}>
-            <Ionicons name="close" size={22} color={Colors.parchment} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Matchmaking…</Text>
-        </View>
-
-        <ScrollView contentContainerStyle={{ padding: Spacing.lg, gap: 16 }}>
-          {countdown !== null && countdown > 0 && (
-            <View style={styles.countdownCard}>
-              <Text style={styles.countdownNumber}>{countdown}</Text>
-              <Text style={styles.countdownLabel}>secondes avant le début</Text>
-              {totalSoFar < TOTAL_PLAYERS && (
-                <Text style={styles.countdownSub}>Recherche de joueurs… {totalSoFar}/{TOTAL_PLAYERS}</Text>
-              )}
-            </View>
-          )}
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Joueurs ({totalSoFar}/{TOTAL_PLAYERS})</Text>
-            {players.map((p, i) => (
-              <View key={i} style={styles.playerRow}>
-                <Ionicons
-                  name={p.isGhost ? 'person-outline' : 'person-circle'}
-                  size={28}
-                  color={p.isGhost ? Colors.textMuted : Colors.orange}
-                />
-                <Text style={[styles.playerName, p.isGhost && { color: Colors.textMuted }]}>
-                  {p.name}
-                </Text>
-                {p.isHost && <View style={styles.hostBadge}><Text style={styles.hostText}>Hôte</Text></View>}
-                {p.isGhost && <Text style={styles.ghostLabel}>fantôme</Text>}
-              </View>
-            ))}
-            {Array.from({ length: TOTAL_PLAYERS - totalSoFar }).map((_, i) => (
-              <View key={`empty_${i}`} style={[styles.playerRow, { opacity: 0.3 }]}>
-                <Ionicons name="ellipse-outline" size={28} color={Colors.textMuted} />
-                <Text style={[styles.playerName, { color: Colors.textMuted }]}>En attente…</Text>
-              </View>
-            ))}
+        <ScrollView contentContainerStyle={{padding:Spacing.lg,gap:16}}>
+          <View style={[st.card,{alignItems:'center',gap:10}]}>
+            {countdown!==null && countdown>0
+              ? <><Text style={st.countBig}>{countdown}</Text><Text style={st.countLabel}>Démarrage dans</Text></>
+              : <><ActivityIndicator size="large" color={Colors.orange}/><Text style={st.countLabel}>Marcel prépare la partie…</Text></>}
           </View>
-
-          <View style={[styles.card, { backgroundColor: 'rgba(200,160,0,0.08)' }]}>
-            <Text style={[styles.cardTitle, { color: Colors.gold }]}>Règles</Text>
-            <Text style={styles.ruleText}>Le coupon va au 1er joueur qui fait Bingo</Text>
-            <Text style={styles.ruleText}>Ligne et Quine donnent de l'XP à tous</Text>
-            <Text style={styles.ruleText}>Les fantômes jouent comme des humains</Text>
+          <View style={st.card}>
+            <Text style={st.cardTitle}>Joueurs ({total}/{TOTAL_PLAYERS})</Text>
+            {players.map((p,i) => <PlayerRow key={i} player={p}/>)}
+            {Array.from({length:TOTAL_PLAYERS-total}).map((_,i)=>
+              <View key={`e${i}`} style={[st.playerRow,{opacity:0.3}]}>
+                <Ionicons name="ellipse-outline" size={24} color={Colors.textMuted}/>
+                <Text style={[st.playerName,{color:Colors.textMuted}]}>En attente…</Text>
+              </View>
+            )}
           </View>
+          <RulesCard/>
         </ScrollView>
       </View>
     );
   }
 
-  // ── Salle d'attente famille ─────────────────────────────────────────────────
-  if (screen === 'waiting_family') {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleLeave} style={styles.backBtn}>
-            <Ionicons name="close" size={22} color={Colors.parchment} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Salle Famille</Text>
-        </View>
-
-        <ScrollView contentContainerStyle={{ padding: Spacing.lg, gap: 16 }}>
-          <View style={styles.codeCard}>
-            <Text style={styles.codeLabelTop}>Code de la salle</Text>
-            <Text style={styles.codeDisplay}>{roomCode}</Text>
-            <Text style={styles.codeHint}>Partagez ce code avec votre famille</Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Joueurs ({players.length}/{TOTAL_PLAYERS})</Text>
-            {players.map((p, i) => (
-              <View key={i} style={styles.playerRow}>
-                <Ionicons name="person-circle" size={28} color={Colors.orange} />
-                <Text style={styles.playerName}>{p.name}</Text>
-                {p.isHost && <View style={styles.hostBadge}><Text style={styles.hostText}>Hôte</Text></View>}
-              </View>
-            ))}
-          </View>
-
-          <View style={[styles.card, { backgroundColor: 'rgba(26,55,108,0.25)' }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Ionicons name="mic-outline" size={22} color={Colors.navy} />
-              <Text style={[styles.cardTitle, { color: Colors.navy }]}>Chat vocal</Text>
-            </View>
-            <Text style={[styles.cardDesc, { fontSize: 13 }]}>
-              Le chat vocal WebRTC entre membres de la Salle Famille arrive prochainement.
-            </Text>
-          </View>
-
-          {players.length > 0 && (
-            <TouchableOpacity style={styles.primaryBtn} onPress={() => setScreen('in_game')}>
-              <Text style={styles.primaryBtnText}>Lancer la partie ({players.length} joueurs)</Text>
-            </TouchableOpacity>
-          )}
-        </ScrollView>
+  if (screen==='waiting_family') return (
+    <View style={st.container}>
+      <View style={st.header}>
+        <TouchableOpacity onPress={handleLeave} style={st.back}><Ionicons name="close" size={22} color={Colors.parchment}/></TouchableOpacity>
+        <Text style={st.headerTitle}>Salle Famille</Text>
       </View>
-    );
-  }
+      <ScrollView contentContainerStyle={{padding:Spacing.lg,gap:16}}>
+        <View style={st.codeCard}>
+          <Text style={st.codeLabel}>Code de la salle</Text>
+          <Text style={st.codeDisplay}>{roomCode}</Text>
+          <Text style={st.codeHint}>Partagez ce code avec vos proches</Text>
+        </View>
+        <View style={[st.card,{backgroundColor:'rgba(26,55,108,0.25)'}]}>
+          <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+            <Ionicons name="mic-outline" size={22} color={Colors.navy}/>
+            <Text style={[st.cardTitle,{color:Colors.navy}]}>Chat vocal (bientôt)</Text>
+          </View>
+          <Text style={[st.cardDesc,{color:Colors.textMuted,fontSize:13}]}>WebRTC via Agora.io — arrive en Phase 2.</Text>
+        </View>
+        <View style={st.card}>
+          <Text style={st.cardTitle}>Joueurs ({players.length})</Text>
+          {players.map((p,i) => <PlayerRow key={i} player={p}/>)}
+        </View>
+        <TouchableOpacity style={st.primaryBtn} onPress={handleStartFamily}>
+          <Text style={st.primaryBtnTxt}>Lancer la partie ({players.length} joueur{players.length>1?'s':''})</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
 
-  // ── En jeu ───────────────────────────────────────────────────────────────────
+  // ── IN_GAME ───────────────────────────────────────────────────────────────────
+  const lastBall = drawn[drawn.length-1] ?? null;
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Partie en cours</Text>
-        <Text style={styles.headerSub}>{players.length} joueurs · Coupon au 1er Bingo</Text>
+    <View style={st.container}>
+      {result.bingo && <ConfettiBingo/>}
+      <View style={st.header}>
+        <Text style={st.headerTitle}>Partie en cours</Text>
+        <Text style={st.headerSub}>{players.length} joueurs · {drawn.length} boules tirées</Text>
       </View>
+      <ScrollView contentContainerStyle={{paddingBottom:60}}>
+        <Marcel visible={marcelVis} mood={marcelMood} message={marcelMsg??''}/>
 
-      <ScrollView contentContainerStyle={{ padding: Spacing.lg, gap: 16 }}>
-        {bingoWinner ? (
-          <View style={styles.winnerCard}>
-            <Text style={styles.winnerEmoji}>🎉</Text>
-            <Text style={styles.winnerTitle}>BINGO !</Text>
-            <Text style={styles.winnerName}>{bingoWinner} remporte le coupon !</Text>
-            <TouchableOpacity style={[styles.primaryBtn, { marginTop: 20 }]} onPress={handleLeave}>
-              <Text style={styles.primaryBtnText}>Retour au menu</Text>
+        {/* Gagnant */}
+        {bingoWinner && (
+          <View style={st.winCard}>
+            <Text style={st.winEmoji}>🎉</Text>
+            <Text style={st.winTitle}>BINGO !</Text>
+            <Text style={st.winName}>{bingoWinner} remporte {couponWon ? 'le coupon !' : 'la partie !'}</Text>
+            {couponWon && <Text style={st.winCoupon}>🎟 Votre coupon est dans l'onglet Coupons</Text>}
+            <TouchableOpacity style={[st.primaryBtn,{marginTop:20}]} onPress={handleLeave}>
+              <Text style={st.primaryBtnTxt}>Retour au menu</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <>
-            <View style={[styles.card, { alignItems: 'center', gap: 12 }]}>
-              <ActivityIndicator color={Colors.orange} size="large" />
-              <Text style={[styles.cardTitle, { textAlign: 'center' }]}>Connexion à la partie…</Text>
-              <Text style={[styles.cardDesc, { textAlign: 'center' }]}>
-                Le mode multijoueur temps réel (Socket.io) est en cours de déploiement.
-              </Text>
-            </View>
+        )}
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Joueurs</Text>
-              {players.map((p, i) => (
-                <View key={i} style={styles.playerRow}>
-                  <Ionicons
-                    name={p.isGhost ? 'person-outline' : 'person-circle'}
-                    size={24}
-                    color={p.isGhost ? Colors.textMuted : Colors.orange}
-                  />
-                  <Text style={[styles.playerName, p.isGhost && { color: Colors.textMuted }]}>{p.name}</Text>
-                  <View style={styles.statusRow}>
-                    {p.hasLine  && <StatusBadge label="L" color="#43A047" />}
-                    {p.hasQuine && <StatusBadge label="Q" color="#FB8C00" />}
-                    {p.hasBingo && <StatusBadge label="B!" color="#E53935" />}
-                  </View>
-                </View>
-              ))}
-            </View>
+        {/* Boule active */}
+        {!bingoWinner && lastBall && (
+          <View style={st.lastBallSection}>
+            <Text style={st.lastBallLabel}>Dernière boule</Text>
+            <LotoBall number={lastBall} size={80}/>
+            <Text style={st.autoHint}>⏱ Prochain tirage dans {drawCountdown}s</Text>
+          </View>
+        )}
 
-            <TouchableOpacity style={styles.secondaryBtn} onPress={handleLeave}>
-              <Text style={styles.secondaryBtnText}>Quitter la partie</Text>
-            </TouchableOpacity>
-          </>
+        {/* Carton */}
+        {card && !bingoWinner && <CardGrid card={card} drawn={drawn} result={result}/>}
+
+        {/* Résultats */}
+        {!bingoWinner && (
+          <View style={st.resultsRow}>
+            <ResultChip label="LIGNE"  active={result.line}  color="#43A047"/>
+            <ResultChip label="QUINE"  active={result.quine} color="#FB8C00"/>
+            <ResultChip label="BINGO"  active={result.bingo} color="#E53935"/>
+          </View>
+        )}
+
+        {/* Historique boules */}
+        {!bingoWinner && drawn.length>0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:12}} contentContainerStyle={{paddingHorizontal:Spacing.lg,gap:6}}>
+            {[...drawn].reverse().map((n,i) => <LotoBall key={i} number={n} size={32}/>)}
+          </ScrollView>
+        )}
+
+        {/* Joueurs */}
+        <View style={[st.card,{marginHorizontal:Spacing.lg}]}>
+          <Text style={st.cardTitle}>Joueurs</Text>
+          {players.map((p,i) => <PlayerRow key={i} player={p}/>)}
+        </View>
+
+        {!bingoWinner && (
+          <TouchableOpacity style={[st.secondaryBtn,{margin:Spacing.lg}]} onPress={handleLeave}>
+            <Text style={st.secondaryBtnTxt}>Quitter la partie</Text>
+          </TouchableOpacity>
         )}
       </ScrollView>
     </View>
   );
 }
 
-function Chip({ icon, label }: { icon: string; label: string }) {
+// ── Sous-composants ───────────────────────────────────────────────────────────
+function MenuScreen({ onJoinPublic, onFamilyJoin, loading }: { onJoinPublic:()=>void; onFamilyJoin:()=>void; loading:boolean }) {
   return (
-    <View style={styles.chip}>
-      <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={13} color={Colors.orange} />
-      <Text style={styles.chipText}>{label}</Text>
+    <ScrollView style={st.container} contentContainerStyle={{paddingBottom:60}}>
+      <View style={st.header}><Text style={st.headerTitle}>Multijoueur</Text><Text style={st.headerSub}>10 joueurs · Partie garantie en moins de 15 secondes</Text></View>
+      <View style={[st.card,{margin:Spacing.lg}]}>
+        <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+          <Ionicons name="globe-outline" size={26} color={Colors.orange}/>
+          <Text style={st.cardTitle}>Partie Publique</Text>
+        </View>
+        <Text style={st.cardDesc}>Jouez avec d'autres joueurs ou des fantômes. Démarrage garanti en moins de 15 secondes.</Text>
+        <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8}}>
+          <Chip icon="people" label="10 joueurs"/>
+          <Chip icon="flash" label="Moins de 15s"/>
+          <Chip icon="ticket" label="Coupon au 1er Bingo"/>
+        </View>
+        <TouchableOpacity style={[st.primaryBtn,loading&&{opacity:0.6},{marginTop:16}]} onPress={onJoinPublic} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff"/> : <Text style={st.primaryBtnTxt}>Trouver une partie</Text>}
+        </TouchableOpacity>
+      </View>
+      <View style={[st.card,{marginHorizontal:Spacing.lg}]}>
+        <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+          <Ionicons name="people-circle-outline" size={26} color={Colors.gold}/>
+          <Text style={st.cardTitle}>Salle Famille</Text>
+        </View>
+        <Text style={st.cardDesc}>Créez une salle privée et invitez vos proches avec un code. Chat vocal bientôt disponible.</Text>
+        <TouchableOpacity style={[st.secondaryBtn,{marginTop:16}]} onPress={onFamilyJoin}>
+          <Text style={st.secondaryBtnTxt}>Créer / Rejoindre</Text>
+        </TouchableOpacity>
+      </View>
+      <RulesCard/>
+    </ScrollView>
+  );
+}
+
+function RulesCard() {
+  return (
+    <View style={[st.card,{marginHorizontal:Spacing.lg,backgroundColor:'rgba(200,160,0,0.08)'}]}>
+      <Text style={[st.cardTitle,{color:Colors.gold}]}>Règles</Text>
+      <Text style={st.ruleText}>🎟 Le coupon va au 1er joueur qui fait Bingo</Text>
+      <Text style={st.ruleText}>⭐ Ligne et Quine donnent de l'XP à tous</Text>
+      <Text style={st.ruleText}>👻 Les fantômes jouent honnêtement</Text>
     </View>
   );
 }
 
-function StatusBadge({ label, color }: { label: string; color: string }) {
+function PlayerRow({ player: p }: { player:Player }) {
   return (
-    <View style={[styles.statusBadge, { backgroundColor: color }]}>
-      <Text style={styles.statusText}>{label}</Text>
+    <View style={st.playerRow}>
+      <Ionicons name={p.isGhost?'person-outline':'person-circle'} size={26} color={p.isGhost?Colors.textMuted:Colors.orange}/>
+      <Text style={[st.playerName,p.isGhost&&{color:Colors.textMuted}]}>{p.name}</Text>
+      {p.isHost  && <View style={st.hostBadge}><Text style={st.hostTxt}>Hôte</Text></View>}
+      {p.isGhost && <Text style={st.ghostLbl}>fantôme</Text>}
+      <View style={{flexDirection:'row',gap:4}}>
+        {p.hasLine  && <StatusBadge label="L" color="#43A047"/>}
+        {p.hasQuine && <StatusBadge label="Q" color="#FB8C00"/>}
+        {p.hasBingo && <StatusBadge label="B!" color="#E53935"/>}
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  content: { paddingBottom: 60 },
+function StatusBadge({ label, color }: { label:string; color:string }) {
+  return <View style={[st.sBadge,{backgroundColor:color}]}><Text style={st.sTxt}>{label}</Text></View>;
+}
 
-  header: {
-    backgroundColor: Colors.wood,
-    paddingTop: 52, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg,
-    borderBottomWidth: 3, borderBottomColor: Colors.woodGrain,
-    flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-  },
-  backBtn: { padding: 4 },
-  headerTitle: { fontSize: 22, fontWeight: '900', color: Colors.parchment, flex: 1 },
-  headerSub: { fontSize: 13, color: Colors.textWood, width: '100%' },
+function ResultChip({ label, active, color }: { label:string; active:boolean; color:string }) {
+  return <View style={[st.chip,active&&{backgroundColor:color,borderColor:color}]}><Text style={[st.chipTxt,active&&{color:'#fff'}]}>{label}</Text></View>;
+}
 
-  card: {
-    backgroundColor: Colors.surface, borderRadius: Radius.lg,
-    padding: Spacing.lg, gap: 10, ...Shadow.card,
-  },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cardTitle: { fontSize: 17, fontWeight: '800', color: Colors.text },
-  cardDesc: { ...Typography.body, color: Colors.textMuted, lineHeight: 22, fontSize: 15 },
+function Chip({ icon, label }: { icon:string; label:string }) {
+  return <View style={st.miniChip}><Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={12} color={Colors.orange}/><Text style={st.miniChipTxt}>{label}</Text></View>;
+}
 
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: Colors.woodMid, borderRadius: Radius.full,
-    paddingHorizontal: 10, paddingVertical: 5,
-  },
-  chipText: { fontSize: 12, color: Colors.parchment, fontWeight: '600' },
-
-  familyBtns: { flexDirection: 'row', gap: 10 },
-
-  primaryBtn: {
-    backgroundColor: Colors.orange, borderRadius: Radius.lg,
-    paddingVertical: 16, alignItems: 'center', ...Shadow.card,
-  },
-  primaryBtnText: { fontSize: 16, fontWeight: '800', color: '#fff' },
-  secondaryBtn: {
-    backgroundColor: Colors.woodMid, borderRadius: Radius.lg,
-    paddingVertical: 16, alignItems: 'center',
-    borderWidth: 2, borderColor: Colors.woodGrain,
-  },
-  secondaryBtnText: { fontSize: 16, fontWeight: '700', color: Colors.parchment },
-
-  ghostNote: {
-    margin: Spacing.lg, marginTop: 0,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: Radius.md, padding: Spacing.md,
-    borderWidth: 1, borderColor: Colors.woodGrain,
-  },
-  ghostNoteTitle: { fontSize: 14, fontWeight: '800', color: Colors.textMuted, marginBottom: 6 },
-  ghostNoteText: { fontSize: 13, color: Colors.textMuted, lineHeight: 19 },
-
-  inputLabel: { fontSize: 14, fontWeight: '700', color: Colors.textMuted },
-  codeInput: {
-    backgroundColor: Colors.woodMid, borderRadius: Radius.md,
-    paddingHorizontal: Spacing.lg, paddingVertical: 16,
-    fontSize: 28, fontWeight: '900', color: Colors.parchment,
-    textAlign: 'center', letterSpacing: 8,
-    borderWidth: 2, borderColor: Colors.woodGrain,
-  },
-
-  countdownCard: {
-    backgroundColor: Colors.wood, borderRadius: Radius.lg,
-    padding: Spacing.xl, alignItems: 'center',
-    borderWidth: 2, borderColor: Colors.orange, ...Shadow.card,
-  },
-  countdownNumber: { fontSize: 72, fontWeight: '900', color: Colors.orange, lineHeight: 80 },
-  countdownLabel: { fontSize: 16, color: Colors.parchment, fontWeight: '600' },
-  countdownSub: { fontSize: 13, color: Colors.textMuted, marginTop: 4 },
-
-  playerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.woodMid,
-  },
-  playerName: { flex: 1, fontSize: 16, fontWeight: '700', color: Colors.text },
-  hostBadge: { backgroundColor: Colors.orange, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
-  hostText: { fontSize: 11, fontWeight: '800', color: '#fff' },
-  ghostLabel: { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic' },
-  ruleText: { fontSize: 14, color: Colors.parchment, lineHeight: 22 },
-
-  codeCard: {
-    backgroundColor: Colors.wood, borderRadius: Radius.lg,
-    padding: Spacing.xl, alignItems: 'center',
-    borderWidth: 2, borderColor: Colors.gold, ...Shadow.card,
-  },
-  codeLabelTop: { fontSize: 13, color: Colors.textMuted, marginBottom: 4 },
-  codeDisplay: { fontSize: 40, fontWeight: '900', color: Colors.orange, letterSpacing: 8 },
-  codeHint: { fontSize: 12, color: Colors.textMuted, marginTop: 6 },
-
-  winnerCard: {
-    backgroundColor: Colors.wood, borderRadius: Radius.lg,
-    padding: Spacing.xl, alignItems: 'center',
-    borderWidth: 3, borderColor: Colors.gold, ...Shadow.card,
-  },
-  winnerEmoji: { fontSize: 60, marginBottom: 8 },
-  winnerTitle: { fontSize: 42, fontWeight: '900', color: Colors.orange, letterSpacing: 4 },
-  winnerName: { fontSize: 18, fontWeight: '700', color: Colors.parchment, marginTop: 8, textAlign: 'center' },
-
-  statusRow: { flexDirection: 'row', gap: 4 },
-  statusBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  statusText: { fontSize: 10, fontWeight: '900', color: '#fff' },
+const st=StyleSheet.create({
+  container:{flex:1,backgroundColor:Colors.background},
+  header:{backgroundColor:Colors.wood,paddingTop:52,paddingHorizontal:Spacing.lg,paddingBottom:Spacing.lg,borderBottomWidth:3,borderBottomColor:Colors.woodGrain,gap:4},
+  headerTitle:{fontSize:22,fontWeight:'900',color:Colors.parchment},
+  headerSub:{fontSize:13,color:Colors.textWood},
+  back:{padding:4,marginBottom:4},
+  card:{backgroundColor:Colors.surface,borderRadius:Radius.lg,padding:Spacing.lg,gap:10,...Shadow.card},
+  cardTitle:{fontSize:17,fontWeight:'800',color:Colors.text},
+  cardDesc:{fontSize:14,color:Colors.textMuted,lineHeight:20},
+  primaryBtn:{backgroundColor:Colors.orange,borderRadius:Radius.lg,paddingVertical:18,alignItems:'center',...Shadow.card},
+  primaryBtnTxt:{fontSize:18,fontWeight:'800',color:'#fff'},
+  secondaryBtn:{backgroundColor:Colors.surface,borderRadius:Radius.lg,paddingVertical:16,alignItems:'center',borderWidth:2,borderColor:Colors.woodMid,...Shadow.card},
+  secondaryBtnTxt:{fontSize:16,fontWeight:'700',color:Colors.text},
+  codeCard:{backgroundColor:Colors.woodMid,borderRadius:Radius.lg,padding:Spacing.xl,alignItems:'center',...Shadow.card},
+  codeLabel:{fontSize:13,color:Colors.textWood,fontWeight:'700',letterSpacing:1},
+  codeDisplay:{fontSize:48,fontWeight:'900',color:Colors.parchment,letterSpacing:8,marginVertical:8},
+  codeHint:{fontSize:13,color:Colors.textMuted},
+  codeInput:{borderWidth:2,borderColor:Colors.woodMid,borderRadius:Radius.md,padding:Spacing.md,fontSize:24,fontWeight:'900',textAlign:'center',letterSpacing:6,color:Colors.text,backgroundColor:Colors.surface},
+  playerRow:{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:8,borderBottomWidth:1,borderBottomColor:Colors.woodMid},
+  playerName:{flex:1,fontSize:15,fontWeight:'700',color:Colors.text},
+  hostBadge:{backgroundColor:Colors.orange,borderRadius:Radius.full,paddingHorizontal:8,paddingVertical:3},
+  hostTxt:{fontSize:11,fontWeight:'900',color:'#fff'},
+  ghostLbl:{fontSize:12,color:Colors.textMuted,fontStyle:'italic'},
+  sBadge:{borderRadius:Radius.full,paddingHorizontal:6,paddingVertical:2},
+  sTxt:{fontSize:11,fontWeight:'900',color:'#fff'},
+  chip:{borderRadius:Radius.full,paddingHorizontal:14,paddingVertical:8,borderWidth:2,borderColor:Colors.woodMid},
+  chipTxt:{fontWeight:'900',fontSize:13,color:Colors.textMuted,letterSpacing:1},
+  miniChip:{flexDirection:'row',alignItems:'center',gap:4,backgroundColor:'rgba(240,128,0,0.1)',borderRadius:Radius.full,paddingHorizontal:10,paddingVertical:5},
+  miniChipTxt:{fontSize:12,fontWeight:'700',color:Colors.text},
+  resultsRow:{flexDirection:'row',justifyContent:'center',gap:12,marginHorizontal:Spacing.lg,marginBottom:12},
+  ruleText:{fontSize:14,color:Colors.text,paddingVertical:4},
+  countBig:{fontSize:72,fontWeight:'900',color:Colors.orange},
+  countLabel:{fontSize:15,color:Colors.textMuted,fontWeight:'700'},
+  lastBallSection:{alignItems:'center',paddingVertical:Spacing.lg},
+  lastBallLabel:{fontSize:13,color:Colors.textMuted,marginBottom:Spacing.sm,fontWeight:'700',letterSpacing:1},
+  autoHint:{fontSize:13,color:Colors.textMuted,marginTop:Spacing.sm},
+  winCard:{margin:Spacing.lg,backgroundColor:Colors.surface,borderRadius:Radius.lg,padding:Spacing.xl,alignItems:'center',...Shadow.card,borderWidth:2,borderColor:Colors.gold},
+  winEmoji:{fontSize:64,marginBottom:8},
+  winTitle:{fontSize:36,fontWeight:'900',color:Colors.orange},
+  winName:{fontSize:18,fontWeight:'700',color:Colors.text,textAlign:'center',marginTop:8},
+  winCoupon:{fontSize:15,color:Colors.gold,fontWeight:'700',marginTop:8},
 });

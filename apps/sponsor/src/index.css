@@ -1,0 +1,29 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --wood:       #2D5A27;
+  --wood-mid:   #3D7A35;
+  --wood-grain: #C8A000;
+  --parchment:  #F5F0E0;
+  --orange:     #F08000;
+  --gold:       #C8A000;
+  --gold-light: #FFD700;
+  --navy:       #1A376C;
+  --surface:    #FFFFFF;
+  --text:       #2A2A2A;
+  --muted:      #6B7280;
+  --bg:         #F3F4F6;
+  --red:        #E53935;
+  --green:      #43A047;
+}
+
+body {
+  font-family: 'Nunito', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+button { cursor: pointer; font-family: inherit; }
+input, select, textarea { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
